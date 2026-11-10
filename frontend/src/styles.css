@@ -1,2 +1,27 @@
+/* ── ATiMs brand tokens (Sprezz Integrated Limited) ───────────── */
+:root {
+  --brand-primary: #A81D1D;      /* crimson diamond */
+  --brand-primary-dark: #7E1414;
+  --brand-green: #4CAF50;        /* green arrow  — success/verified */
+  --brand-purple: #A349A4;       /* purple arrow — inspector/lab */
+  --brand-yellow: #F5C51D;       /* yellow arrow — pending */
+  --brand-blue: #2392DF;         /* blue arrow   — info/trace */
+  --brand-ink: #1A1A1A;
+  --brand-paper: #FAF7F2;
+}
+
 :root { font-family: system-ui, sans-serif; }
-body { margin: 0; background: #faf9f5; }
+body {
+  margin: 0;
+  background: var(--brand-paper);
+  color: var(--brand-ink);
+}
+
+/* Buttons / accent utilities (kept tiny until a full UI kit lands) */
+.atims-primary {
+  background: var(--brand-primary);
+  color: #fff;
+}
+.atims-verified { color: var(--brand-green); }
+.atims-pending { color: var(--brand-yellow); }
+.atims-info { color: var(--brand-blue); }

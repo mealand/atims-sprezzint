@@ -68,7 +68,15 @@ cd infra && JWT_SECRET=… CORS_ORIGINS=http://localhost:5173 docker compose up 
 4. Chain verifier (`GET /verify/:id`, `@atims/verify` CLI) detects any tampering.
 5. Nightly Merkle root → OpenTimestamps (planned job, week 8).
 
-## License & branding
+## Brand
 
-© Sprezz Integrated Limited. Built on 100% open-source components (MIT/Apache-2/BSD/PostgreSQL licence).
-Aspiring to the [Alliance](https://alliance.xyz) accelerator: verifiable, open, accessible infrastructure for real-world supply chains.
+**Sprezz Integrated Limited** — logo palette drives the product palette:
+| Token | Hex | Use |
+|---|---|---|
+| Crimson (diamond) | `#A81D1D` | Primary actions, headers, admin |
+| Green | `#4CAF50` | Verified/success, farmer role |
+| Purple | `#A349A4` | Inspector/lab/certification |
+| Yellow | `#F5C51D` | Pending/attention, aggregator |
+| Blue | `#2392DF` | Info/trace links, regulator |
+
+Tokens live in `frontend/src/lib/brand.ts` and `frontend/src/styles.css`.
