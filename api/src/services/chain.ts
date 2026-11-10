@@ -1,0 +1,92 @@
+import { canonicalHash, canonicalize } from '@atims/shared';
+import { createHash, createPublicKey, verify } from 'node:crypto';
+import type { Stage } from '@atims/shared';
+
+/** A full event row as stored (subset of columns used for verification). */
+export interface EventRow {
+  batch_id: string;
+  seq: number;
+  event_type: string;
+  actor_id: string;
+  actor_pubkey: string | null;
+  actor_sig: string | null;
+  prev_hash: string | null;
+  payload_hash: string;
+  to_stage: Stage | null;
+  payload: unknown;
+  created_at: string;
+}
+
+/** The canonical payload that is hashed & signed for an event (documented wire format). */
+export function eventPayloadFor(e: Pick<EventRow, 'batch_id' | 'seq' | 'event_type' | 'actor_id' | 'actor_pubkey' | 'to_stage' | 'payload' | 'created_at'>) {
+  return {
+    batch_id: e.batch_id,
+    seq: e.seq,
+    event_type: e.event_type,
+    actor_id: e.actor_id,
+    actor_pubkey: e.actor_pubkey,
+    to_stage: e.to_stage ?? null,
+    payload: e.payload,
+    created_at: e.created_at,
+  };
+}
+
+export function payloadHashOf(eventPayload: unknown): string {
+  return canonicalHash(eventPayload);
+}
+
+/** Verify an ed25519 signature over the canonical payload against the actor pubkey (SPKI PEM). */
+export function verifySig(eventPayload: unknown, pubkeyPem: string | null, sigBase64: string | null): boolean {
+  if (!pubkeyPem || !sigBase64) return false;
+  try {
+    return verify(
+      null,
+      Buffer.from(canonicalize(eventPayload)),
+      createPublicKey(pubkeyPem),
+      Buffer.from(sigBase64, 'base64'),
+    );
+  } catch {
+    return false;
+  }
+}
+
+/**
+ * The exact bytes hashed as `prev_hash` of the *next* event.
+ * Public format — changing this is a breaking protocol change.
+ */
+export function prevHashOf(link: Pick<EventRow, 'batch_id' | 'seq' | 'payload_hash' | 'actor_pubkey' | 'actor_sig'>): string {
+  return createHash('sha256')
+    .update(canonicalize({
+      batch_id: link.batch_id,
+      seq: link.seq,
+      payload_hash: link.payload_hash,
+      actor_pubkey: link.actor_pubkey,
+      actor_sig: link.actor_sig,
+    }))
+    .digest('hex');
+}
+
+/** Full-chain verification for one batch, in seq order. */
+export function verifyChain(links: EventRow[]) {
+  const problems: string[] = [];
+  const seqs = links.map((l) => l.seq);
+  if (seqs.some((s, i) => s !== i)) {
+    problems.push('seq sequence must be contiguous starting at 0');
+    return { valid: false, problems };
+  }
+  links.forEach((link, i) => {
+    const payload = eventPayloadFor(link);
+    if (link.payload_hash !== payloadHashOf(payload)) {
+      problems.push(`seq ${link.seq}: payload_hash mismatch (payload or hash altered)`);
+    }
+    if (i === 0) {
+      if (link.prev_hash !== null) problems.push('seq 0: genesis prev_hash must be null');
+    } else if (link.prev_hash !== prevHashOf(links[i - 1])) {
+      problems.push(`seq ${link.seq}: prev_hash does not match prior event — history broken`);
+    }
+    if (!verifySig(payload, link.actor_pubkey, link.actor_sig)) {
+      problems.push(`seq ${link.seq}: invalid actor signature`);
+    }
+  });
+  return { valid: problems.length === 0, problems };
+}

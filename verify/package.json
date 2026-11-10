@@ -1,0 +1,10 @@
+{
+  "name": "@atims/verify",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "bin": { "atims-verify": "src/cli.ts" },
+  "scripts": { "build": "tsc --noEmit", "test": "echo 'TODO milestone: verifier tests'" },
+  "dependencies": { "@atims/shared": "*" },
+  "devDependencies": { "typescript": "^5.5.0" }
+}

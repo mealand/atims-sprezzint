@@ -1,0 +1,62 @@
+# ATiMs — full open-source stack. Requires Docker Engine 24+.
+# Start: docker compose up -d
+# Migrate: docker compose run --rm api npm run migrate
+name: atims
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: atims
+      POSTGRES_PASSWORD: atims
+      POSTGRES_DB: atims
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U atims"]
+      interval: 5s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    # MVP: reserved for BullMQ anchoring worker (future job scheduler)
+
+  api:
+    build: ../api
+    environment:
+      NODE_ENV: production
+      PORT: 3000
+      DATABASE_URL: postgres://atims:atims@postgres:5432/atims
+      CORS_ORIGINS: ${CORS_ORIGINS:-https://atims.sprezzint.com}
+      JWT_SECRET: ${JWT_SECRET:?set JWT_SECRET}
+      OLLAMA_URL: ${OLLAMA_URL:-http://host.docker.internal:11434}
+    depends_on:
+      postgres: { condition: service_healthy }
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:3000/health || exit 1"]
+      interval: 10s
+      retries: 5
+
+  frontend:
+    build: ../frontend
+    depends_on: [api]
+
+  caddy:
+    image: caddy:2-alpine
+    ports: ["80:80", "443:443"]
+    volumes:
+      - ./caddy/Caddyfile:/etc/caddy/Caddyfile:ro
+      - caddy_data:/data
+    depends_on: [frontend, api]
+
+  # Optional local AI (open-source only). `docker compose --profile ai up -d`
+  ollama:
+    image: ollama/ollama:latest
+    profiles: ["ai"]
+    volumes:
+      - ollama:/root/.ollama
+
+volumes:
+  pgdata:
+  caddy_data:
+  ollama:

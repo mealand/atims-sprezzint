@@ -1,0 +1,12 @@
+{$DOMAIN:localhost} {
+	# API first
+	handle /api/* {
+		reverse-proxy api:3000
+	}
+	handle {
+		reverse-proxy frontend:80
+	}
+}
+
+# prod: DOMAIN=atims.sprezzint.com docker compose --profile web up -d
+# Caddy obtains a free Let's Encrypt certificate automatically (HTTP/3 for weak networks).
