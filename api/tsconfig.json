@@ -2,7 +2,7 @@
   "extends": "../tsconfig.base.json",
   "compilerOptions": {
     "baseUrl": ".",
-    "paths": { "@atims/shared": ["../shared/src/index.ts"], "@atims/shared/*": ["../shared/src/*"] }
+    "paths": { "@atims/shared": ["../shared/src/node.ts"], "@atims/shared/*": ["../shared/src/*"] }
   },
   "include": ["src", "test"],
   "exclude": ["dist"]

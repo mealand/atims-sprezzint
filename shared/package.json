@@ -5,7 +5,11 @@
   "type": "module",
   "main": "src/index.ts",
   "types": "src/index.ts",
-  "exports": { ".": "./src/index.ts", "./*": "./src/*" },
+  "exports": {
+    ".": { "node": "./src/node.ts", "default": "./src/index.ts" },
+    "./node": "./src/node.ts",
+    "./*": "./src/*"
+  },
   "scripts": {
     "build": "tsc --noEmit",
     "test": "vitest run",
