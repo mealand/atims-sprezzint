@@ -104,3 +104,8 @@ INSERT INTO stage_requirements (to_stage, evidence_types, from_roles, descriptio
   ('EXPORTED',   '{PHYTOSANITARY_CERT,EXPORT_DECLARATION}', '{inspector,exporter}', 'PHYTO cert + export declaration required for export clearance'),
   ('DELIVERED',  '{DELIVERY_NOTE}',              '{}',  'Destination delivery note required')
 ON CONFLICT (to_stage) DO NOTHING;
+
+-- ── Bootstrap admin (dev default: nexus ATIMS-ADMIN-000001 password atims-admin — CHANGE IN PROD) ──
+INSERT INTO entities (nexus_id, name, role, status, password_hash, country)
+VALUES ('ATIMS-ADMIN-000001', 'ATiMs Administrator', 'admin', 'verified', crypt('atims-admin', gen_salt('bf', 12)), 'NG')
+ON CONFLICT (nexus_id) DO NOTHING;

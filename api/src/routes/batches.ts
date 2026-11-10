@@ -10,7 +10,7 @@ interface CreateBody {
 }
 interface EventBody {
   event_type?: string; to_stage?: string; payload?: Record<string, unknown>;
-  actor_pubkey?: string; actor_sig?: string;
+  actor_pubkey?: string; actor_sig?: string; dry_run?: boolean; created_at?: string;
 }
 
 /** sha256 over the documented prev-hash format — MUST stay in sync with services/chain.ts. */
@@ -94,7 +94,8 @@ export default async function batchRoutes(app: FastifyInstance) {
       if (!batchRow) return reply.code(404).send({ error: 'batch not found' });
       if (batchRow.compliance_status === 'blocked') return reply.code(409).send({ error: 'batch is blocked by a failed gate' });
 
-      const { event_type, to_stage, payload, actor_pubkey, actor_sig } = req.body ?? {};
+      const { event_type, to_stage, payload, actor_pubkey, actor_sig, dry_run, created_at } =
+        req.body as EventBody & { dry_run?: boolean; created_at?: string };
       if (!event_type || !payload) return reply.code(400).send({ error: 'event_type and payload required' });
 
       if (batchRow.current_holder_id !== actor(req)) {
@@ -127,7 +128,14 @@ export default async function batchRoutes(app: FastifyInstance) {
       const seq = Number(((await query<{ s: number }>(
         `SELECT COALESCE(MAX(seq), -1) + 1 AS s FROM batch_events WHERE batch_id = $1`, [batchId],
       )).rows[0].s));
-      const createdAt = new Date().toISOString();
+      // Client-supplied created_at makes client-side signing possible; must be recent and parseable.
+      let createdAt = new Date().toISOString();
+      if (created_at) {
+        const t = new Date(created_at);
+        if (!Number.isNaN(t.valueOf()) && Math.abs(Date.now() - t.valueOf()) < 10 * 60_000) {
+          createdAt = t.toISOString();
+        }
+      }
       const wireEvent = {
         batch_id: batchId, seq, event_type,
         actor_id: actor(req), actor_pubkey: actor_pubkey ?? null,
@@ -142,6 +150,11 @@ export default async function batchRoutes(app: FastifyInstance) {
           )).rows[0])
         : null;
       const prevHash = prior ? sha256Prev(prior) : null;
+
+      // ── Dry-run: return the exact wire event + hashes so the client can sign it ──
+      if (dry_run) {
+        return reply.send({ wire_event: wireEvent, payload_hash: payloadHash, prev_hash: prevHash });
+      }
 
       const { rows: inserted } = await query(
         `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash, payload_hash, to_stage, payload)

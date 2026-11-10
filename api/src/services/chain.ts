@@ -35,18 +35,26 @@ export function payloadHashOf(eventPayload: unknown): string {
   return canonicalHash(eventPayload);
 }
 
-/** Verify an ed25519 signature over the canonical payload against the actor pubkey (SPKI PEM). */
-export function verifySig(eventPayload: unknown, pubkeyPem: string | null, sigBase64: string | null): boolean {
-  if (!pubkeyPem || !sigBase64) return false;
+/** Verify an ed25519 signature over the canonical payload against the actor pubkey.
+ *  Accepts SPKI PEM or a raw 32-byte public key (base64 of the noble/webcrypto raw form). */
+export function verifySig(eventPayload: unknown, pubkey: string | null, sigBase64: string | null): boolean {
+  if (!pubkey || !sigBase64) return false;
   try {
-    return verify(
-      null,
-      Buffer.from(canonicalize(eventPayload)),
-      createPublicKey(pubkeyPem),
-      Buffer.from(sigBase64, 'base64'),
-    );
+    const key = createPublicKey(pubkey);
+    return verify(null, Buffer.from(canonicalize(eventPayload)), key, Buffer.from(sigBase64, 'base64'));
   } catch {
-    return false;
+    try {
+      // Reconstruct SPKI from a raw 32-byte public key (base64 of the noble/webcrypto raw form).
+      const rawBytes = Buffer.from(pubkey, 'base64');
+      if (rawBytes.length !== 32) return false;
+      const spki = Buffer.concat([Buffer.from([
+        0x30, 0x2a, 0x30, 0x05, 0x06, 0x03, 0x2b, 0x65, 0x70, 0x03, 0x21, 0x00,
+      ]), rawBytes]);
+      const key = createPublicKey({ key: spki, format: 'der', type: 'spki' });
+      return verify(null, Buffer.from(canonicalize(eventPayload)), key, Buffer.from(sigBase64, 'base64'));
+    } catch {
+      return false;
+    }
   }
 }
 

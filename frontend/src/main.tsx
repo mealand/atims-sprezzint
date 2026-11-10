@@ -13,6 +13,7 @@ import CreateBatch from './pages/dashboard/CreateBatch';
 import BatchDetail from './pages/dashboard/BatchDetail';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import InspectorDashboard from './pages/inspector/InspectorDashboard';
+import Settings from './pages/Settings';
 import './styles.css';
 
 const qc = new QueryClient();
@@ -47,6 +48,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/login" element={<Login />} />
             <Route path="/register" element={<Register />} />
             <Route path="/pending" element={<PendingVerification />} />
+            <Route path="/settings" element={<Protected allow={['farmer','aggregator','processor','exporter','lab','inspector','regulator','admin']}><Settings /></Protected>} />
             <Route path="/trace" element={<Trace />} />
             <Route path="/trace/:traceId" element={<Trace />} />
             <Route path="/create-batch" element={<Protected allow={['farmer']}><CreateBatch /></Protected>} />

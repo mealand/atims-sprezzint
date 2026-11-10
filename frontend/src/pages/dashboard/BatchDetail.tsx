@@ -2,6 +2,8 @@ import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { api } from '../../lib/api';
+import { appendSignedEvent } from '../../lib/events';
+import { queueEvent, pendingCount, syncQueue } from '../../lib/offline';
 import DashboardLayout from '../../components/DashboardLayout';
 import { useAuth } from '../../lib/auth';
 import { StageBadge, StatusPill } from './FarmerDashboard';
@@ -31,16 +33,31 @@ export default function BatchDetail() {
   const [ eventErr, setEventErr ] = useState<string | null>(null);
   const [ note, setNote ] = useState('');
   const [ evidence, setEvidence ] = useState({ evidence_type: 'PHOTO', file_hash: '' });
+  const [ queuedCount, setQueuedCount ] = useState<number | null>(null);
+  const [ signed, setSigned ] = useState(false);
+
+  // Promise-wrapped signature: fails BEFORE any network mutation, so offline
+  // users can fall back to the queue gracefully.
+  async function withSigning(record: { event_type: string; to_stage?: string; payload: unknown }) {
+    try {
+      const res = await appendSignedEvent(data!.batch.id, record);
+      setSigned(true);
+      return res;
+    } catch (err) {
+      if (!navigator.onLine) {
+        await queueEvent(data!.batch.id, record.event_type, record.payload, record.to_stage);
+        setQueuedCount(await pendingCount());
+        return { queued: true };
+      }
+      throw err;
+    }
+  }
 
   const advance = useMutation({
     mutationFn: async () => {
-      const batch = data!.batch;
-      const next = NEXT[NEXT.indexOf(batch.current_stage) + 1];
+      const next = NEXT[NEXT.indexOf(data!.batch.current_stage) + 1];
       if (!next) throw new Error('already delivered');
-      return api(`/batches/${batch.id}/events`, {
-        method: 'POST',
-        body: { event_type: 'STAGE_ADVANCE', to_stage: next, payload: { advanced_by: me?.nexus_id } },
-      });
+      return withSigning({ event_type: 'STAGE_ADVANCE', to_stage: next, payload: { advanced_by: me?.nexus_id } });
     },
     onSuccess: () => { setEventErr(null); qc.invalidateQueries({ queryKey: ['batch', id] }); },
     onError: (e: { message: string }) => setEventErr(e.message),
@@ -48,20 +65,20 @@ export default function BatchDetail() {
 
   const transfer = useMutation({
     mutationFn: async (toEntityId: string) =>
-      api(`/batches/${data!.batch.id}/events`, {
-        method: 'POST',
-        body: { event_type: 'CUSTODY_TRANSFER', payload: { to_entity_id: toEntityId } },
-      }),
+      withSigning({ event_type: 'CUSTODY_TRANSFER', payload: { to_entity_id: toEntityId } }),
     onSuccess: () => { setEventErr(null); qc.invalidateQueries({ queryKey: ['batch', id] }); },
     onError: (e: { message: string }) => setEventErr(e.message),
   });
 
   const addNote = useMutation({
-    mutationFn: () => api(`/batches/${data!.batch.id}/events`, {
-      method: 'POST', body: { event_type: 'NOTE', payload: { text: note } },
-    }),
+    mutationFn: () => withSigning({ event_type: 'NOTE', payload: { text: note } }),
     onSuccess: () => { setNote(''); qc.invalidateQueries({ queryKey: ['batch', id] }); },
     onError: (e: { message: string }) => setEventErr(e.message),
+  });
+
+  const drain = useMutation({
+    mutationFn: syncQueue,
+    onSuccess: ({ remaining }) => { setQueuedCount(remaining); qc.invalidateQueries({ queryKey: ['batch', id] }); },
   });
 
   const addEvidence = useMutation({
@@ -97,6 +114,15 @@ export default function BatchDetail() {
       </div>
 
       {eventErr && <p className="error">{eventErr}</p>}
+      {signed && events.length >= 0 && (
+        <p className="muted tiny">Events are signed with this device's ed25519 key (private key never leaves the browser).</p>
+      )}
+      {queuedCount !== null && (
+        <p className="error">
+          {queuedCount} event(s) queued offline.{' '}
+          <button onClick={() => drain.mutate()} disabled={drain.isPending}>Sync now</button>
+        </p>
+      )}
 
       {/* ── Actions (current holder only) ── */}
       {me && (
