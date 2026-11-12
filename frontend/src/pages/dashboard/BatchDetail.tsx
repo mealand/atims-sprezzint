@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useParams } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
+import QRCode from 'qrcode';
 import { api } from '../../lib/api';
 import { appendSignedEvent } from '../../lib/events';
 import { queueEvent, pendingCount, syncQueue } from '../../lib/offline';
@@ -35,6 +36,19 @@ export default function BatchDetail() {
   const [ evidence, setEvidence ] = useState({ evidence_type: 'PHOTO', file_hash: '' });
   const [ queuedCount, setQueuedCount ] = useState<number | null>(null);
   const [ signed, setSigned ] = useState(false);
+  const [ handoverQr, setHandoverQr ] = useState<string | null>(null);
+  const [ handoverBusy, setHandoverBusy ] = useState(false);
+
+  async function startHandover() {
+    setHandoverBusy(true);
+    try {
+      const res = await api<{ token: string }>(`/batches/${data!.batch.id}/handover/start`, { method: 'POST', body: {} });
+      // QR encodes a deep link that opens the accept page with the token pre-filled.
+      const url = `${location.origin}/handover/accept?token=${encodeURIComponent(res.token)}`;
+      setHandoverQr(await QRCode.toDataURL(url, { width: 400, margin: 1 }));
+    } catch (e) { setEventErr((e as Error).message); }
+    finally { setHandoverBusy(false); }
+  }
 
   // Promise-wrapped signature: fails BEFORE any network mutation, so offline
   // users can fall back to the queue gracefully.
@@ -133,7 +147,19 @@ export default function BatchDetail() {
               {nextStage ? `Advance → ${nextStage}` : 'Delivered'}
             </button>
             <CustodyTransfer onTransfer={(x) => transfer.mutate(x)} busy={transfer.isPending} />
+            <button onClick={startHandover} disabled={handoverBusy}>
+              {handoverBusy ? 'Minting…' : 'QR handover'}
+            </button>
           </div>
+          {handoverQr && (
+            <div className="row">
+              <img src={handoverQr} alt="Handover QR" width={200} height={200} />
+              <p className="muted tiny">
+                The receiving party scans this (or pastes the token) at <code>/handover/accept</code>.
+                Token expires in 1 hour, single use.
+              </p>
+            </div>
+          )}
           <div className="row">
             <input placeholder="Add a signed note…" value={note} onChange={(e) => setNote(e.target.value)} />
             <button onClick={() => addNote.mutate()} disabled={!note || addNote.isPending}>Add note</button>

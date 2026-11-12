@@ -11,6 +11,7 @@ import PendingVerification from './pages/auth/PendingVerification';
 import FarmerDashboard from './pages/dashboard/FarmerDashboard';
 import CreateBatch from './pages/dashboard/CreateBatch';
 import BatchDetail from './pages/dashboard/BatchDetail';
+import HandoverAccept from './pages/handover/HandoverAccept';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import InspectorDashboard from './pages/inspector/InspectorDashboard';
 import Settings from './pages/Settings';
@@ -53,6 +54,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/trace/:traceId" element={<Trace />} />
             <Route path="/create-batch" element={<Protected allow={['farmer']}><CreateBatch /></Protected>} />
             <Route path="/batches/:id" element={<Protected allow={['farmer','aggregator','processor','exporter','lab','inspector','admin']}><BatchDetail /></Protected>} />
+            <Route path="/handover/accept" element={<Protected allow={['farmer','aggregator','processor','exporter','lab','admin']}><HandoverAccept /></Protected>} />
             <Route path="/*" element={<Navigate to="/" replace />} />
           </Routes>
         </BrowserRouter>
