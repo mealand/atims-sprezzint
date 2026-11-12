@@ -1,5 +1,7 @@
 /** Thin API client. Token persistence leaves room for device-held keys later. */
-const BASE = import.meta.env.VITE_API_URL ?? '';
+// '/api' is proxied to the API server in dev (vite.config.ts) and can be
+// reverse-proxied the same way in production.
+const BASE = import.meta.env.VITE_API_URL ?? '/api';
 
 let token: string | null = localStorage.getItem('atims_token');
 
