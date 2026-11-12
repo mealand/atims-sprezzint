@@ -1,7 +1,7 @@
 import { query, actor } from '../db/pool.js';
 import { evaluateGate, type StageRequirementRow } from '../services/gates.js';
 import { canonicalHash, canonicalize, STAGES, type Stage, type Role } from '@atims/shared';
-import { createHash } from 'node:crypto';
+import { nextLink } from '../services/appendEvent.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface CreateBody {
@@ -11,16 +11,6 @@ interface CreateBody {
 interface EventBody {
   event_type?: string; to_stage?: string; payload?: Record<string, unknown>;
   actor_pubkey?: string; actor_sig?: string; dry_run?: boolean; created_at?: string;
-}
-
-/** sha256 over the documented prev-hash format — MUST stay in sync with services/chain.ts. */
-function sha256Prev(prior: Record<string, unknown>): string {
-  return createHash('sha256')
-    .update(canonicalize({
-      batch_id: prior.batch_id, seq: prior.seq, payload_hash: prior.payload_hash,
-      actor_pubkey: prior.actor_pubkey, actor_sig: prior.actor_sig,
-    }))
-    .digest('hex');
 }
 
 export default async function batchRoutes(app: FastifyInstance) {
@@ -46,11 +36,16 @@ export default async function batchRoutes(app: FastifyInstance) {
       const batch = rows[0];
 
       const payload = { created: { commodity, quantity, unit, production_date } };
-      const payloadHash = canonicalHash(payload);
+      const genesisCreatedAt = new Date().toISOString();
+      const wire = {
+        batch_id: batch.id, seq: 0, event_type: 'BATCH_CREATED', actor_id: actor(req),
+        actor_pubkey: null, to_stage: 'HARVESTED', payload, created_at: genesisCreatedAt,
+      };
+      const payloadHash = canonicalHash(wire);
       const { rows: evRows } = await query(
-        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, payload_hash, to_stage, payload)
-         VALUES ($1, 0, 'BATCH_CREATED', $2, $3, 'HARVESTED', $4) RETURNING id, created_at`,
-        [batch.id, actor(req), payloadHash, payload],
+        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, payload_hash, to_stage, payload, created_at)
+         VALUES ($1, 0, 'BATCH_CREATED', $2, $3, 'HARVESTED', $4::jsonb, $5) RETURNING id, created_at`,
+        [batch.id, actor(req), payloadHash, JSON.stringify(payload), genesisCreatedAt],
       );
       reply.code(201).send({ batch, genesis_event: evRows[0] });
     },
@@ -115,19 +110,24 @@ export default async function batchRoutes(app: FastifyInstance) {
         )).rows) as Array<{ evidence_type: string; issued_by_role: Role | null }>;
         const gate = evaluateGate({ to_stage: to_stage as Stage, evidence_present: evidence }, gateReq);
         if (!gate.pass) {
+          const gateLink = await nextLink(batchId);
+          const gatePayload = { gate };
+          const gateCreatedAt = new Date().toISOString();
+          const gateHash = canonicalHash({
+            batch_id: batchId, seq: gateLink.seq, event_type: 'GATE_REJECTED', actor_id: actor(req),
+            actor_pubkey: null, to_stage: to_stage, payload: gatePayload, created_at: gateCreatedAt,
+          });
           await query(
-            `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, payload_hash, to_stage, payload)
-             SELECT $1, COALESCE(MAX(seq),-1)+1, 'GATE_REJECTED', $2, $3, $4, $5::jsonb FROM batch_events WHERE batch_id = $1`,
-            [batchId, actor(req), canonicalHash({ rejected_stage: to_stage, gate }), to_stage, JSON.stringify({ gate })],
+            `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, prev_hash, payload_hash, to_stage, payload, created_at)
+             VALUES ($1, $2, 'GATE_REJECTED', $3, $4, $5, $6, $7::jsonb, $8)`,
+            [batchId, gateLink.seq, actor(req), gateLink.prev_hash, gateHash, to_stage, JSON.stringify(gatePayload), gateCreatedAt],
           );
           return reply.code(422).send({ error: 'gate failed', gate });
         }
       }
 
       // ── Append the event on the hash chain ──
-      const seq = Number(((await query<{ s: number }>(
-        `SELECT COALESCE(MAX(seq), -1) + 1 AS s FROM batch_events WHERE batch_id = $1`, [batchId],
-      )).rows[0].s));
+      const { seq, prev_hash: prevHash } = await nextLink(batchId);
       // Client-supplied created_at makes client-side signing possible; must be recent and parseable.
       let createdAt = new Date().toISOString();
       if (created_at) {
@@ -143,23 +143,15 @@ export default async function batchRoutes(app: FastifyInstance) {
       };
       const payloadHash = canonicalHash(wireEvent);
 
-      const prior = seq > 0
-        ? ((await query<Record<string, unknown>>(
-            `SELECT seq, payload_hash, actor_pubkey, actor_sig, batch_id FROM batch_events
-             WHERE batch_id = $1 AND seq = $2`, [batchId, seq - 1],
-          )).rows[0])
-        : null;
-      const prevHash = prior ? sha256Prev(prior) : null;
-
       // ── Dry-run: return the exact wire event + hashes so the client can sign it ──
       if (dry_run) {
         return reply.send({ wire_event: wireEvent, payload_hash: payloadHash, prev_hash: prevHash });
       }
 
       const { rows: inserted } = await query(
-        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash, payload_hash, to_stage, payload)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb) RETURNING *`,
-        [batchId, seq, event_type, actor(req), actor_pubkey ?? null, actor_sig ?? null, prevHash, payloadHash, to_stage ?? null, JSON.stringify(payload)],
+        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash, payload_hash, to_stage, payload, created_at)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11) RETURNING *`,
+        [batchId, seq, event_type, actor(req), actor_pubkey ?? null, actor_sig ?? null, prevHash, payloadHash, to_stage ?? null, JSON.stringify(payload), createdAt],
       );
 
       // ── Apply consequences: stage advance and custody transfer ──

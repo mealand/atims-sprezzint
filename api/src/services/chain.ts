@@ -19,6 +19,11 @@ export interface EventRow {
 
 /** The canonical payload that is hashed & signed for an event (documented wire format). */
 export function eventPayloadFor(e: Pick<EventRow, 'batch_id' | 'seq' | 'event_type' | 'actor_id' | 'actor_pubkey' | 'to_stage' | 'payload' | 'created_at'>) {
+  const createdAt =
+    typeof e.created_at === 'string' ? e.created_at
+    : e.created_at && typeof (e.created_at as { toISOString?: unknown }).toISOString === 'function'
+      ? (e.created_at as unknown as Date).toISOString()
+      : String(e.created_at);
   return {
     batch_id: e.batch_id,
     seq: e.seq,
@@ -27,7 +32,8 @@ export function eventPayloadFor(e: Pick<EventRow, 'batch_id' | 'seq' | 'event_ty
     actor_pubkey: e.actor_pubkey,
     to_stage: e.to_stage ?? null,
     payload: e.payload,
-    created_at: e.created_at,
+    // pg returns timestamptz as a JS Date — normalize to the same ISO string that was hashed at insert.
+    created_at: createdAt,
   };
 }
 
@@ -74,13 +80,16 @@ export function prevHashOf(link: Pick<EventRow, 'batch_id' | 'seq' | 'payload_ha
     .digest('hex');
 }
 
-/** Full-chain verification for one batch, in seq order. */
+/** Full-chain verification for one batch, in seq order.
+ *  `valid` = hash-chain integrity (payload hashes + prev links).
+ *  Unsigned events (server-attested genesis, legacy data) are *warnings*, not failures. */
 export function verifyChain(links: EventRow[]) {
   const problems: string[] = [];
+  const warnings: string[] = [];
   const seqs = links.map((l) => l.seq);
   if (seqs.some((s, i) => s !== i)) {
     problems.push('seq sequence must be contiguous starting at 0');
-    return { valid: false, problems };
+    return { valid: false, problems, warnings };
   }
   links.forEach((link, i) => {
     const payload = eventPayloadFor(link);
@@ -92,9 +101,13 @@ export function verifyChain(links: EventRow[]) {
     } else if (link.prev_hash !== prevHashOf(links[i - 1])) {
       problems.push(`seq ${link.seq}: prev_hash does not match prior event — history broken`);
     }
-    if (!verifySig(payload, link.actor_pubkey, link.actor_sig)) {
-      problems.push(`seq ${link.seq}: invalid actor signature`);
+    if (link.actor_sig) {
+      if (!verifySig(payload, link.actor_pubkey, link.actor_sig)) {
+        problems.push(`seq ${link.seq}: invalid actor signature`);
+      }
+    } else {
+      warnings.push(`seq ${link.seq}: unsigned event (server-attested)`);
     }
   });
-  return { valid: problems.length === 0, problems };
+  return { valid: problems.length === 0, problems, warnings };
 }

@@ -1,5 +1,6 @@
 import { query, actor } from '../db/pool.js';
 import { canonicalHash } from '@atims/shared';
+import { nextLink } from '../services/appendEvent.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface EvidenceBody {
@@ -19,11 +20,17 @@ export default async function evidenceRoutes(app: FastifyInstance) {
         return reply.code(400).send({ error: 'evidence_type and 64-hex file_hash required' });
       }
       const payload = { evidence_type, file_hash, issued_by_role: issued_by_role ?? null, object_key: object_key ?? null, meta: meta ?? {} };
+      // Compute seq first, then insert with the full wire shape — no UPDATE on the append-only ledger.
+      const { seq: evSeq, prev_hash: evPrev } = await nextLink(batch.id);
+      const evCreatedAt = new Date().toISOString();
+      const wireHash = canonicalHash({
+        batch_id: batch.id, seq: evSeq, event_type: 'EVIDENCE_ADDED', actor_id: actor(req),
+        actor_pubkey: null, to_stage: null, payload, created_at: evCreatedAt,
+      });
       const { rows: ev } = await query<{ id: string }>(
-        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, payload_hash, to_stage, payload)
-         SELECT $1, COALESCE(MAX(seq),-1)+1, 'EVIDENCE_ADDED', $2, $3, NULL, $4::jsonb FROM batch_events WHERE batch_id = $1
-         RETURNING id`,
-        [batch.id, actor(req), canonicalHash(payload), JSON.stringify(payload)],
+        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, prev_hash, payload_hash, to_stage, payload, created_at)
+         VALUES ($1, $2, 'EVIDENCE_ADDED', $3, $4, $5, NULL, $6::jsonb, $7) RETURNING id`,
+        [batch.id, evSeq, actor(req), evPrev, wireHash, JSON.stringify(payload), evCreatedAt],
       );
       const { rows: ins } = await query(
         `INSERT INTO evidence (batch_id, event_id, actor_id, evidence_type, file_hash, object_key, issued_by_role, meta)

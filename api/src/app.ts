@@ -44,6 +44,7 @@ export async function buildApp() {
   await app.register(import('./routes/evidence.js'));
   await app.register(import('./routes/trace.js'));
   await app.register(import('./routes/ai.js'));
+  await app.register(import('./routes/health.js'));
 
   return app;
 }
