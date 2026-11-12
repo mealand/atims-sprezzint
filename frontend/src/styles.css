@@ -1,5 +1,20 @@
 /* ── ATiMs global styles (Sprezz brand) ─────────────────────── */
 
+/* Brand tokens — must mirror frontend/src/lib/brand.ts */
+:root {
+  --brand-primary: #A81D1D;
+  --brand-primary-dark: #7E1414;
+  --brand-green: #4CAF50;
+  --brand-purple: #A349A4;
+  --brand-yellow: #F5C51D;
+  --brand-blue: #2392DF;
+  --brand-ink: #1A1A1A;
+  --brand-paper: #FAF7F2;
+}
+
+body { margin: 0; background: var(--brand-paper); color: var(--brand-ink); font-family: system-ui, -apple-system, 'Segoe UI', sans-serif; }
+input, select { padding: 8px 10px; border: 1px solid #d6d1c4; border-radius: 6px; }
+
 .content-wrap {
   max-width: 1000px;
   margin: 0 auto;
