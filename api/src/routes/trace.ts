@@ -39,17 +39,26 @@ export default async function traceRoutes(app: FastifyInstance) {
     },
   );
 
-  /** GET /verify/:batch_id — integrity-first view used by the atims-verify CLI. */
-  app.get<{ Params: { batch_id: string } }>('/verify/:batch_id', async (req, reply) => {
-    const rows = (await query<{ id: string }>(
-      `SELECT id FROM batches WHERE id::text = $1 OR trace_id = $1`, [req.params.batch_id],
-    )).rows;
-    if (!rows[0]) return reply.code(404).send({ error: 'not found' });
-    const full = (await query<EventRow>(
-      `SELECT batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash,
-              payload_hash, to_stage, payload, created_at
-       FROM batch_events WHERE batch_id::text = $1 ORDER BY seq ASC`, [rows[0].id],
-    )).rows;
-    reply.send(verifyChain(full));
-  });
+  /** GET /verify/:batch_id — returns the RAW event chain; verification is done
+   *  client-side (atims-verify CLI, /verify web page) so nobody must trust this server. */
+  app.get<{ Params: { batch_id: string } }>(
+    '/verify/:batch_id',
+    { config: { rateLimit: { max: 30, timeWindow: '1 minute' } } },
+    async (req, reply) => {
+      const rows = (await query<{ id: string; trace_id: string }>(
+        `SELECT id, trace_id FROM batches WHERE id::text = $1 OR trace_id = $1`, [req.params.batch_id],
+      )).rows[0];
+      if (!rows) return reply.code(404).send({ error: 'not found' });
+      const events = (await query(
+        `SELECT batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash,
+                payload_hash, to_stage, payload, created_at
+         FROM batch_events WHERE batch_id::text = $1 ORDER BY seq ASC`, [rows.id],
+      )).rows.map((e: Record<string, unknown>) => ({
+        ...e,
+        // ISO string so third-party verifiers hash the exact insert-time value.
+        created_at: e.created_at instanceof Date ? (e.created_at as Date).toISOString() : String(e.created_at),
+      }));
+      reply.send({ trace_id: rows.trace_id, events });
+    },
+  );
 }

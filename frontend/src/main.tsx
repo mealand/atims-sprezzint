@@ -15,6 +15,7 @@ import HandoverAccept from './pages/handover/HandoverAccept';
 import AdminDashboard from './pages/admin/AdminDashboard';
 import InspectorDashboard from './pages/inspector/InspectorDashboard';
 import Settings from './pages/Settings';
+import Verify from './pages/Verify';
 import './styles.css';
 
 const qc = new QueryClient();
@@ -52,6 +53,7 @@ createRoot(document.getElementById('root')!).render(
             <Route path="/settings" element={<Protected allow={['farmer','aggregator','processor','exporter','lab','inspector','regulator','admin']}><Settings /></Protected>} />
             <Route path="/trace" element={<Trace />} />
             <Route path="/trace/:traceId" element={<Trace />} />
+            <Route path="/verify" element={<Verify />} />
             <Route path="/create-batch" element={<Protected allow={['farmer']}><CreateBatch /></Protected>} />
             <Route path="/batches/:id" element={<Protected allow={['farmer','aggregator','processor','exporter','lab','inspector','admin']}><BatchDetail /></Protected>} />
             <Route path="/handover/accept" element={<Protected allow={['farmer','aggregator','processor','exporter','lab','admin']}><HandoverAccept /></Protected>} />
