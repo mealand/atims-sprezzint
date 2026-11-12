@@ -19,19 +19,18 @@ async function getClient() {
   if (!storageEnabled || clientPromise) return clientPromise;
   clientPromise = (async () => {
     const { S3Client, PutObjectCommand } = await import('@aws-sdk/client-s3');
-    const { getSignedUrl, S3RequestPresigner } = await import('@aws-sdk/s3-request-presigner');
+    const { getSignedUrl } = await import('@aws-sdk/s3-request-presigner');
     const client = new S3Client({
       endpoint: S3_ENDPOINT!,
       region: 'us-east-1',
       credentials: { accessKeyId: S3_KEY!, secretAccessKey: S3_SECRET! },
       forcePathStyle: true,
     });
-    const presigner = new S3RequestPresigner(client as never);
     return {
       PutObjectCommand: PutObjectCommand as unknown as PutCmd,
       presigner: {
         getSignedUrl: (cmd: unknown, opts: unknown) =>
-          getSignedUrl(presigner as never, cmd as never, opts as never) as Promise<string>,
+          getSignedUrl(client as never, cmd as never, opts as never) as Promise<string>,
       },
     };
   })();

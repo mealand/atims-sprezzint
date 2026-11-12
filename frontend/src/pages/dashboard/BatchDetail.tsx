@@ -34,6 +34,7 @@ export default function BatchDetail() {
   const [ eventErr, setEventErr ] = useState<string | null>(null);
   const [ note, setNote ] = useState('');
   const [ evidence, setEvidence ] = useState({ evidence_type: 'PHOTO', file_hash: '' });
+  const [ evidenceFile, setEvidenceFile ] = useState<File | null>(null);
   const [ queuedCount, setQueuedCount ] = useState<number | null>(null);
   const [ signed, setSigned ] = useState(false);
   const [ handoverQr, setHandoverQr ] = useState<string | null>(null);
@@ -96,11 +97,22 @@ export default function BatchDetail() {
   });
 
   const addEvidence = useMutation({
-    mutationFn: () => api(`/batches/${data!.batch.id}/evidence`, {
-      method: 'POST',
-      body: { evidence_type: evidence.evidence_type, file_hash: evidence.file_hash.trim().toLowerCase() },
-    }),
-    onSuccess: () => { qc.invalidateQueries({ queryKey: ['batch', id] }); },
+    mutationFn: async () => {
+      const fileHash = evidence.file_hash.trim().toLowerCase();
+      // 1. presigned PUT (optional MinIO/S3)  2. upload the real file  3. register hash on-chain
+      const up = await api<{ upload_url: string | null; object_key: string }>(`/batches/${data!.batch.id}/evidence/upload-url`, {
+        method: 'POST', body: { file_hash: fileHash, evidence_type: evidence.evidence_type },
+      });
+      if (up.upload_url && evidenceFile) {
+        const put = await fetch(up.upload_url, { method: 'PUT', body: evidenceFile });
+        if (!put.ok) throw new Error(`storage upload failed (${put.status})`);
+      }
+      return api(`/batches/${data!.batch.id}/evidence`, {
+        method: 'POST',
+        body: { evidence_type: evidence.evidence_type, file_hash: fileHash, object_key: up.object_key },
+      });
+    },
+    onSuccess: () => { setEvidenceFile(null); qc.invalidateQueries({ queryKey: ['batch', id] }); },
     onError: (e: { message: string }) => setEventErr(e.message),
   });
 
@@ -168,7 +180,11 @@ export default function BatchDetail() {
             <select value={evidence.evidence_type} onChange={(e) => setEvidence({ ...evidence, evidence_type: e.target.value })}>
               {['PHOTO','PHYTOSANITARY_CERT','LAB_RESULT','PACKHOUSE_LOG','TRANSPORT_DOC','EXPORT_DECLARATION','DELIVERY_NOTE'].map((t) => <option key={t}>{t}</option>)}
             </select>
-            <input type="file" onChange={(e) => e.target.files?.[0] && hashFile(e.target.files[0])} />
+            <input type="file" onChange={(e) => {
+              const f = e.target.files?.[0] ?? null;
+              setEvidenceFile(f);
+              if (f) hashFile(f);
+            }} />
             <input className="mono" placeholder="SHA-256 (auto-filled on file pick)" value={evidence.file_hash}
               onChange={(e) => setEvidence({ ...evidence, file_hash: e.target.value })} />
             <button className="atims-primary" onClick={() => addEvidence.mutate()} disabled={addEvidence.isPending}>Register evidence</button>

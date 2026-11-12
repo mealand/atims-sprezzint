@@ -1,6 +1,7 @@
 import { query, actor } from '../db/pool.js';
 import { canonicalHash } from '@atims/shared';
 import { nextLink } from '../services/appendEvent.js';
+import { presignUpload, storageEnabled } from '../services/storage.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface EvidenceBody {
@@ -53,6 +54,26 @@ export default async function evidenceRoutes(app: FastifyInstance) {
         [req.params.id],
       );
       reply.send({ evidence: rows });
+    },
+  );
+
+  /**
+   * POST /batches/:id/evidence/upload-url — M3.2: presigned direct upload.
+   * Client hashes the file locally first (the hash is the chain authority),
+   * gets a presigned PUT for MinIO/S3 (optional), then registers the evidence.
+   */
+  app.post<{ Params: { id: string }; Body: { file_hash?: string; evidence_type?: string } }>(
+    '/batches/:id/evidence/upload-url',
+    { onRequest: [app.authenticate] },
+    async (req, reply) => {
+      const batch = (await query<{ id: string }>(`SELECT id FROM batches WHERE id::text = $1`, [req.params.id])).rows[0];
+      if (!batch) return reply.code(404).send({ error: 'batch not found' });
+      const { file_hash, evidence_type } = req.body ?? {};
+      if (!file_hash || !/^[a-f0-9]{64}$/.test(file_hash) || !evidence_type) {
+        return reply.code(400).send({ error: 'file_hash (64 hex) and evidence_type required' });
+      }
+      const handle = await presignUpload(actor(req), batch.id, file_hash);
+      reply.send({ ...handle, storage_enabled: storageEnabled });
     },
   );
 }
