@@ -7,6 +7,7 @@ interface TraceData {
   batch: { trace_id: string; commodity: string; quantity: number; unit: string; current_stage: string; production_date: string; destination_country: string | null };
   history: Array<{ seq: number; event_type: string; to_stage: string | null; created_at: string }>;
   integrity: { valid: boolean; problems: string[] };
+  anchors: Array<{ head_hash: string; confirmed: boolean; block_height: number | null; submitted_at: string; confirmed_at: string | null }>;
 }
 
 /** Public, no-auth consumer trace page. */
@@ -32,7 +33,7 @@ export default function Trace() {
   }
   if (isLoading || error) return <main className="center"><p>{isLoading ? 'Loading…' : (error as Error).message}</p></main>;
   if (!data) return null;
-  const { batch, history, integrity } = data;
+  const { batch, history, integrity, anchors = [] } = data;
 
   return (
     <main className="mx-auto max-w-2xl px-6 py-10">
@@ -53,7 +54,24 @@ export default function Trace() {
           </li>
         ))}
       </ol>
+      {anchors.length > 0 && (
+        <section>
+          <h3>Timestamp anchors</h3>
+          <ul>
+            {anchors.map((a) => (
+              <li key={a.head_hash}>
+                <code className="mono tiny">{a.head_hash.slice(0, 16)}…</code>
+                {' '}· {a.confirmed
+                  ? <span style={{ color: brand.colors.green }}>✓ Bitcoin-anchored{a.block_height ? ` (block ${a.block_height})` : ''}</span>
+                  : <span style={{ color: brand.colors.yellow }}>⏳ submitted — awaiting Bitcoin confirmation</span>}
+                <span className="muted tiny"> · {new Date(a.submitted_at).toLocaleString()}</span>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
       <p className="tiny muted">Information on this page comes from a hash-chained, signature-verified event log anchored in a public timestamping service. No trust in ATiMs servers required.</p>
+      <p className="tiny muted">Independently verify this batch at <a href="/verify">/verify</a> — every hash and signature is recomputed in your browser.</p>
     </main>
   );
 }

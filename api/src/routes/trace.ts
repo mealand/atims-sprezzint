@@ -29,12 +29,27 @@ export default async function traceRoutes(app: FastifyInstance) {
         [batch.id],
       )).rows;
 
+      const anchors = (await query(
+        `SELECT head_hash, ots_proof, block_height, submitted_at, confirmed_at
+         FROM chain_anchors WHERE batch_id = $1 ORDER BY submitted_at ASC`, [batch.id],
+      )).rows;
+
       reply.send({
         batch,
         history: events.map((e) => ({
           seq: e.seq, event_type: e.event_type, to_stage: e.to_stage, created_at: e.created_at,
         })),
         integrity: verifyChain(events),
+        anchors: anchors.map((a) => ({
+          head_hash: a.head_hash,
+          confirmed: Boolean(a.confirmed_at),
+          block_height: a.block_height,
+          // Bitcoin-anchored proof-of-existence (base64 .ots); verifiable with the
+          // independent OpenTimestamps verifier: https://opentimestamps.org
+          ots_proof: a.ots_proof,
+          submitted_at: a.submitted_at,
+          confirmed_at: a.confirmed_at,
+        })),
       });
     },
   );
