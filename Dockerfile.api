@@ -1,0 +1,23 @@
+# ATiMs API image — builds from the monorepo ROOT so the private @atims/shared
+# workspace is included. Railway/Docker context: repository root.
+FROM node:22-alpine
+WORKDIR /app
+
+# Install all workspace deps first (lockfile-layer caching)
+COPY package.json package-lock.json ./
+COPY shared/package.json shared/package.json
+COPY api/package.json api/package.json
+COPY verify/package.json verify/package.json
+COPY frontend/package.json frontend/package.json
+RUN npm ci
+
+# Source
+COPY tsconfig.base.json ./
+COPY shared/ shared/
+COPY api/ api/
+
+WORKDIR /app/api
+EXPOSE 3000
+
+# Apply schema migrations, then boot. Railway injects PORT.
+CMD ["sh", "-c", "npm run migrate && npm run start"]
