@@ -24,6 +24,15 @@ export default function DashboardLayout({ title, children, actions }:
           <strong>{me?.name}</strong>
           <span>{me?.nexus_id}</span>
           <em>{me ? ROLE_LABELS[me.role] : ''}</em>
+          {me && (
+            <nav className="dash-nav" style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 14, fontSize: '0.9rem' }}>
+              <Link to="/" style={{ color: '#fff' }}>Dashboard</Link>
+              {me.role === 'farmer' && <Link to="/create-batch" style={{ color: '#fff' }}>Create batch</Link>}
+              {['farmer','aggregator','processor','exporter','lab','admin'].includes(me.role)
+                && <Link to="/handover/accept" style={{ color: '#fff' }}>Accept handover</Link>}
+              <Link to="/settings" style={{ color: '#fff' }}>Settings</Link>
+            </nav>
+          )}
         </aside>
         <main className="dash-main">
           <h2>{title}</h2>
