@@ -49,28 +49,35 @@ async function getClient() {
   return clientPromise;
 }
 
-/** Create the evidence bucket if missing (idempotent; runs once at boot). */
+/** Create the evidence bucket if missing (idempotent; runs at boot with retries).
+ * Never throws — storage problems must never take the API down. */
 export async function ensureBucket(): Promise<boolean> {
   if (!storageEnabled) return false;
-  try {
-    const { S3Client, HeadBucketCommand, CreateBucketCommand } = await import('@aws-sdk/client-s3');
-    const client = new S3Client({
-      endpoint: S3_ENDPOINT!,
-      region: 'us-east-1',
-      credentials: { accessKeyId: S3_KEY!, secretAccessKey: S3_SECRET! },
-      forcePathStyle: true,
-    });
+  for (let attempt = 1; attempt <= 5; attempt++) {
     try {
-      await client.send(new HeadBucketCommand({ Bucket: S3_BUCKET }) as never);
-      return true; // exists
-    } catch {
-      await client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }) as never);
-      return true;
+      const { S3Client, HeadBucketCommand, CreateBucketCommand } = await import('@aws-sdk/client-s3');
+      const client = new S3Client({
+        endpoint: S3_ENDPOINT!,
+        region: 'us-east-1',
+        credentials: { accessKeyId: S3_KEY!, secretAccessKey: S3_SECRET! },
+        forcePathStyle: true,
+      });
+      try {
+        await client.send(new HeadBucketCommand({ Bucket: S3_BUCKET }) as never);
+        console.log(`✓ evidence bucket "${S3_BUCKET}" ready`);
+        return true; // exists
+      } catch {
+        await client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }) as never);
+        console.log(`✓ evidence bucket "${S3_BUCKET}" created`);
+        return true;
+      }
+    } catch (e) {
+      console.error(`ensureBucket attempt ${attempt}/5 failed:`, (e as Error).message);
+      await new Promise((r) => setTimeout(r, 3000 * attempt));
     }
-  } catch (e) {
-    console.error('ensureBucket failed:', (e as Error).message);
-    return false;
   }
+  console.error('ensureBucket: giving up — evidence uploads will fail until storage is reachable');
+  return false;
 }
 
 export interface UploadHandle { upload_url: string | null; object_key: string }
