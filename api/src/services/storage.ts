@@ -37,6 +37,30 @@ async function getClient() {
   return clientPromise;
 }
 
+/** Create the evidence bucket if missing (idempotent; runs once at boot). */
+export async function ensureBucket(): Promise<boolean> {
+  if (!storageEnabled) return false;
+  try {
+    const { S3Client, HeadBucketCommand, CreateBucketCommand } = await import('@aws-sdk/client-s3');
+    const client = new S3Client({
+      endpoint: S3_ENDPOINT!,
+      region: 'us-east-1',
+      credentials: { accessKeyId: S3_KEY!, secretAccessKey: S3_SECRET! },
+      forcePathStyle: true,
+    });
+    try {
+      await client.send(new HeadBucketCommand({ Bucket: S3_BUCKET }) as never);
+      return true; // exists
+    } catch {
+      await client.send(new CreateBucketCommand({ Bucket: S3_BUCKET }) as never);
+      return true;
+    }
+  } catch (e) {
+    console.error('ensureBucket failed:', (e as Error).message);
+    return false;
+  }
+}
+
 export interface UploadHandle { upload_url: string | null; object_key: string }
 
 export async function presignUpload(entityId: string, batchId: string, fileHashHex: string): Promise<UploadHandle> {
