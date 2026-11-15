@@ -93,9 +93,14 @@ export default async function evidenceRoutes(app: FastifyInstance) {
       const row = rows[0];
       if (!row) return reply.code(404).send({ error: 'evidence not found' });
       if (!row.object_key) return reply.code(409).send({ error: 'hash-only evidence — no stored object' });
-      const url = await presignDownload(row.object_key);
-      if (!url) return reply.code(503).send({ error: 'storage not configured on this API instance' });
-      reply.send({ url });
+      try {
+        const url = await presignDownload(row.object_key);
+        if (!url) return reply.code(503).send({ error: 'storage not configured on this API instance' });
+        reply.send({ url });
+      } catch (e) {
+        req.log.error({ err: e }, 'presignDownload failed');
+        return reply.code(500).send({ error: `presign failed: ${(e as Error).message}` });
+      }
     },
   );
 }
