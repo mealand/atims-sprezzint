@@ -3,7 +3,8 @@
  * If MINIO/S3 config present → presigned PUT URLs for direct browser upload.
  * Otherwise evidence is hash-registered only (the hash is the authority).
  */
-const S3_ENDPOINT = process.env.MINIO_ENDPOINT; // e.g. http://minio:9000
+const S3_ENDPOINT = process.env.MINIO_ENDPOINT; // e.g. http://minio:9000 (private, server-side ops)
+const S3_ENDPOINT_PUBLIC = process.env.MINIO_ENDPOINT_PUBLIC; // e.g. https://minio-xxx.up.railway.app (browser-facing presigns)
 const S3_KEY = process.env.MINIO_ACCESS_KEY;
 const S3_SECRET = process.env.MINIO_SECRET_KEY;
 const S3_BUCKET = process.env.MINIO_BUCKET ?? 'atims-evidence';
@@ -26,11 +27,22 @@ async function getClient() {
       credentials: { accessKeyId: S3_KEY!, secretAccessKey: S3_SECRET! },
       forcePathStyle: true,
     });
+    // Separate client for minting browser-facing presigned URLs: the signature
+    // covers the endpoint host, so presigns must use the public URL the browser
+    // can actually reach (Railway private hostnames are unreachable externally).
+    const presignClient = S3_ENDPOINT_PUBLIC
+      ? new S3Client({
+          endpoint: S3_ENDPOINT_PUBLIC,
+          region: 'us-east-1',
+          credentials: { accessKeyId: S3_KEY!, secretAccessKey: S3_SECRET! },
+          forcePathStyle: true,
+        })
+      : client;
     return {
       PutObjectCommand: PutObjectCommand as unknown as PutCmd,
       presigner: {
         getSignedUrl: (cmd: unknown, opts: unknown) =>
-          getSignedUrl(client as never, cmd as never, opts as never) as Promise<string>,
+          getSignedUrl(presignClient as never, cmd as never, opts as never) as Promise<string>,
       },
     };
   })();
