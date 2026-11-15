@@ -83,3 +83,12 @@ export async function presignUpload(entityId: string, batchId: string, fileHashH
   const upload_url = await client.presigner.getSignedUrl(cmd, { expiresIn: 600 });
   return { upload_url, object_key };
 }
+
+/** Presigned GET for viewing stored evidence (10 min validity). */
+export async function presignDownload(objectKey: string): Promise<string | null> {
+  const client = await getClient();
+  if (!client) return null;
+  const { GetObjectCommand } = await import('@aws-sdk/client-s3');
+  const cmd = new (GetObjectCommand as unknown as PutCmd)({ Bucket: S3_BUCKET, Key: objectKey });
+  return await client.presigner.getSignedUrl(cmd, { expiresIn: 600 });
+}

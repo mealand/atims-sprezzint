@@ -18,7 +18,7 @@ interface BatchDetailData {
   batch: { id: string; trace_id: string; commodity: string; quantity: number; unit: string;
     current_stage: string; compliance_status: string; production_date: string; [k: string]: unknown };
   events: EventView[];
-  evidence: Array<{ id: string; evidence_type: string; file_hash: string; created_at: string; issuer_role?: string }>;
+  evidence: Array<{ id: string; evidence_type: string; file_hash: string; created_at: string; issuer_role?: string; object_key?: string | null }>;
 }
 
 const NEXT = ['HARVESTED', 'AGGREGATED', 'PACKED', 'IN_TRANSIT', 'AT_PORT', 'EXPORTED', 'DELIVERED'];
@@ -199,6 +199,15 @@ export default function BatchDetail() {
           {evs.map((e) => (
             <li key={e.id}>
               <code>{e.evidence_type}</code> · {e.issuer_role ?? '?'} · hash <code className="mono tiny">{String(e.file_hash).slice(0, 16)}…</code>
+              {e.object_key && (
+                <> · <a href="#" onClick={async (ev) => {
+                  ev.preventDefault();
+                  try {
+                    const { url } = await api<{ url: string }>(`/batches/${id}/evidence/${e.id}/url`);
+                    window.open(url, '_blank', 'noopener');
+                  } catch { window.alert('Could not fetch the evidence file — is storage configured?'); }
+                }}>view file</a></>
+              )}
             </li>
           ))}
           {evs.length === 0 && <li className="muted">No evidence yet.</li>}

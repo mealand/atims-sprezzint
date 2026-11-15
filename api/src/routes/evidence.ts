@@ -1,7 +1,7 @@
 import { query, actor } from '../db/pool.js';
 import { canonicalHash } from '@atims/shared';
 import { nextLink } from '../services/appendEvent.js';
-import { presignUpload, storageEnabled } from '../services/storage.js';
+import { presignUpload, presignDownload, storageEnabled } from '../services/storage.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface EvidenceBody {
@@ -74,6 +74,28 @@ export default async function evidenceRoutes(app: FastifyInstance) {
       }
       const handle = await presignUpload(actor(req), batch.id, file_hash);
       reply.send({ ...handle, storage_enabled: storageEnabled });
+    },
+  );
+
+  /**
+   * GET /batches/:id/evidence/:evidenceId/url — presigned read URL for a stored
+   * evidence object (browser-facing, uses the public MinIO endpoint). Actors and
+   * inspectors only; the evidence row must belong to the batch.
+   */
+  app.get<{ Params: { id: string; evidenceId: string } }>(
+    '/batches/:id/evidence/:evidenceId/url',
+    { onRequest: [app.authenticate] },
+    async (req, reply) => {
+      const { rows } = await query<{ object_key: string | null }>(
+        `SELECT object_key FROM evidence WHERE id::text = $1 AND batch_id::text = $2`,
+        [req.params.evidenceId, req.params.id],
+      );
+      const row = rows[0];
+      if (!row) return reply.code(404).send({ error: 'evidence not found' });
+      if (!row.object_key) return reply.code(409).send({ error: 'hash-only evidence — no stored object' });
+      const url = await presignDownload(row.object_key);
+      if (!url) return reply.code(503).send({ error: 'storage not configured' });
+      reply.send({ url });
     },
   );
 }
