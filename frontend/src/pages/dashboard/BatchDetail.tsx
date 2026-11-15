@@ -205,7 +205,7 @@ export default function BatchDetail() {
                   try {
                     const { url } = await api<{ url: string }>(`/batches/${id}/evidence/${e.id}/url`);
                     window.open(url, '_blank', 'noopener');
-                  } catch { window.alert('Could not fetch the evidence file — is storage configured?'); }
+                  } catch (err) { window.alert(`Could not fetch the evidence file: ${(err as Error).message}`); }
                 }}>view file</a></>
               )}
             </li>
