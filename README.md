@@ -1,29 +1,61 @@
 # ATiMs — Agro-Trace Integrated Management System
 
-> **Product of Sprezz Integrated Limited** — AI-native, signature-verified agricultural
-> traceability with *active* compliance gates. Fully open-source stack, zero paid services.
+> **Product of Sprezz Integrated Limited** — signature-verified agricultural
+> traceability with *active* compliance gates. 100% open-source stack, zero paid services.
 
-**Docs:** [`docs/ATIMS-OVERVIEW.md`](docs/ATIMS-OVERVIEW.md) — full product overview.
+**Live:** https://atims.sprezzint.com · **API health:** https://atims-sprezzint-production.up.railway.app/health
+
+**Docs:** [`docs/ATIMS-OVERVIEW.md`](docs/ATIMS-OVERVIEW.md) (product blueprint) ·
+[`docs/ALLIANCE-PITCH.md`](docs/ALLIANCE-PITCH.md) (Alliance pitch) ·
+[`docs/VIDEO-SCRIPT.md`](docs/VIDEO-SCRIPT.md) (1-minute founder video script)
 
 ## What makes it different
 
-- **Active compliance**: stage gates *block* batch progression — they do not merely log.
-- **Verifiable without trusting us**: every event is a canonical-JSON payload hashed (SHA-256)
-  and ed25519-signed by its actor's device-held key, chained via `prev_hash`, and the daily
-  Merkle root is anchored publicly via OpenTimestamps. Verify with the standalone `@atims/verify` CLI.
-- **AI-native, locally**: farmer assistant and inspector copilot run on **local Ollama** —
-  no external AI service, no data leakage, no cost per token. AI advises; it never mutates state.
-- **Data-driven gates**: corridor rules live in `stage_requirements` rows — adding a corridor
-  means adding data, not code.
+- **Active compliance**: stage gates *block* batch progression — a batch physically
+  cannot advance (HARVESTED → AGGREGATED → PACKED → IN_TRANSIT → …) without the
+  required evidence. Existing systems merely log; ATiMs enforces.
+- **Verifiable without trusting us**: every event is a canonical-JSON payload hashed
+  (SHA-256) and ed25519-signed by its actor's device-held key, chained via `prev_hash`.
+  The daily Merkle root is anchored publicly via **OpenTimestamps** (Bitcoin-backed,
+  free). Anyone can verify with the standalone `@atims/verify` CLI.
+- **Evidence that exists**: certificate and lab files are hashed in the browser,
+  uploaded directly to MinIO via presigned URLs, and referenced on the ledger by hash.
+  A stored file is re-downloadable through a short-lived presigned URL; a hash-only
+  registration is honest history, never faked.
+- **Data-driven gates**: corridor rules live in `stage_requirements` rows — adding a
+  corridor means adding data, not code.
+
+## Architecture
+
+```
+            ┌─────────────────────────── Railway (production) ───────────────────────────┐
+ Browser ──▶│  atims-frontend (React PWA) ──▶ atims-sprezzint (Fastify API)              │
+   │        │                                     │              │                       │
+   │        │                                     ▼              ▼                       │
+ QR scan ──│  /trace/:id (public)          PostgreSQL 16     MinIO (evidence files)        │
+   │        │                               append-only       presigned up/down,           │
+   │        │                               event ledger      atims-backups bucket         │
+   │        │                                     │                                     │
+   │        │                                     ▼  nightly cron                        │
+   └────────│  verify: recompute hashes      pg_dump ──▶ MinIO atims-backups (7-day      │
+            │  against ledger                retention)                                 │
+            └───────────────────────────────────────────────────────────────────────────-┘
+                                              │
+                                              ▼ nightly Merkle root
+                                     OpenTimestamps (public, Bitcoin-anchored)
+```
+
+See it live: scan a batch's QR, or open `/trace/:trace_id` — the page **recomputes
+every hash and signature in your browser** before showing you a single event.
 
 ## Monorepo
 
 ```
-├── api/       Fastify 5 + TypeScript + PostgreSQL 16 (append-only event ledger)
-├── frontend/  React 18 + Vite PWA (offline-tolerant, mobile-first)
-├── shared/    Domain types + canonical JSON + hashing (property-tested)
-├── verify/    Standalone third-party chain verifier CLI
-├── infra/     docker compose (postgres, redis, api, frontend, caddy, optional ollama)
+├── api/           Fastify 5 + TypeScript + PostgreSQL 16 (append-only event ledger)
+├── frontend/      React 18 + Vite PWA (offline-tolerant, mobile-first)
+├── shared/        Domain types + canonical JSON + hashing (property-tested)
+├── verify/        Standalone third-party chain verifier CLI
+├── infra/         docker-compose (local dev) + backup job (infra/backup)
 └── docs/
 ```
 
@@ -31,17 +63,23 @@
 
 ```bash
 npm install
-cp api/.env.example api/.env           # then set JWT_SECRET
-docker run -d -p 5432:5432 -e POSTGRES_PASSWORD=atims -e POSTGRES_USER=atims -e POSTGRES_DB=atims postgres:16
+cp api/.env.example api/.env           # then set JWT_SECRET (64 hex chars)
+docker compose up -d postgres minio    # postgres on :5433, minio on :9000/:9001
 npm run migrate -w @atims/api
-npm run dev                             # API on :3000, frontend on :5173
+npm run dev                            # API on :3000, frontend on :5173
 ```
 
-Full stack (with caddy + optional local AI):
+## Deployment (Railway, all free-tier/open-source)
 
-```bash
-cd infra && JWT_SECRET=… CORS_ORIGINS=http://localhost:5173 docker compose up -d
-```
+| Service | Image/Build | Notes |
+|---|---|---|
+| `atims-sprezzint` | `Dockerfile.api` | Fastify API; env from Railway variables |
+| `atims-frontend` | `Dockerfile.frontend` | Custom domain `atims.sprezzint.com`, TLS via Railway |
+| Postgres | Railway plugin | `${{Postgres.DATABASE_URL}}` referenced by API & backup job |
+| MinIO | community rebuild image | Explicit start command; volume at `/data`; private endpoint (API) + public endpoint (presigned browser traffic) |
+| backup (cron) | `infra/backup/Dockerfile` | Nightly `pg_dump` → gzip → MinIO `atims-backups`, 7-day retention |
+
+Auto-deploys from `main` on every push.
 
 ## API surface (MVP)
 
@@ -49,16 +87,17 @@ cd infra && JWT_SECRET=… CORS_ORIGINS=http://localhost:5173 docker compose up 
 |---|---|---|---|
 | POST | `/auth/register` | — | Self-register (pending until admin verifies) |
 | POST | `/auth/login` | — | JWT issuance |
+| POST | `/auth/password` | ✓ | Change password (bcrypt, min 10 chars) |
 | GET | `/entities/me` | ✓ | Current entity |
 | POST | `/entities/:id/lifecycle` | admin | verify / suspend / reject |
 | POST | `/batches` | farmer | Create batch + genesis event |
 | GET | `/batches`, `/batches/:id` | ✓ | Own batches, full history |
 | POST | `/batches/:id/events` | holder | Append signed event; **enforces stage gates** |
-| POST | `/batches/:id/evidence` | holder | Register hash-verified evidence (also an event) |
+| POST | `/batches/:id/evidence/upload-url` | holder | Presigned MinIO upload |
+| GET | `/batches/:id/evidence/:eid/url` | holder | Presigned download (10-min expiry) |
 | GET | `/trace/:trace_id` | **public** | QR-scannable, signature-verified history |
 | GET | `/verify/:batch_id` | **public** | Chain integrity verdict |
-| POST | `/ai/farmer-assistant` | ✓ | Local Ollama assistant |
-| POST | `/ai/inspector-summary` | inspector+ | Local Ollama anomaly summary |
+| GET | `/health` | public | Uptime + storage diagnostics |
 
 ## Integrity guarantees
 
@@ -66,7 +105,7 @@ cd infra && JWT_SECRET=… CORS_ORIGINS=http://localhost:5173 docker compose up 
 2. `payload_hash` = SHA-256(canonical JSON of the signed wire event).
 3. `prev_hash` = SHA-256 over the documented prior-event summary format (see `api/src/services/chain.ts`).
 4. Chain verifier (`GET /verify/:id`, `@atims/verify` CLI) detects any tampering.
-5. Nightly Merkle root → OpenTimestamps (planned job, week 8).
+5. Nightly Merkle root → **OpenTimestamps** — live in production.
 
 ## Brand
 
