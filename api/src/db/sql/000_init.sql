@@ -105,7 +105,5 @@ INSERT INTO stage_requirements (to_stage, evidence_types, from_roles, descriptio
   ('DELIVERED',  '{DELIVERY_NOTE}',              '{}',  'Destination delivery note required')
 ON CONFLICT (to_stage) DO NOTHING;
 
--- ── Bootstrap admin (dev default: nexus ATIMS-ADMIN-000001 password atims-admin — CHANGE IN PROD) ──
-INSERT INTO entities (nexus_id, name, role, status, password_hash, country)
-VALUES ('ATIMS-ADMIN-000001', 'ATiMs Administrator', 'admin', 'verified', crypt('atims-admin', gen_salt('bf', 12)), 'NG')
-ON CONFLICT (nexus_id) DO NOTHING;
+-- Bootstrap admin: no credentials live in source. migrate.ts creates the first admin
+-- from ATIMS_ADMIN_PASSWORD only when no admin exists yet.

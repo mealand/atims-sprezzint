@@ -63,7 +63,7 @@ every hash and signature in your browser** before showing you a single event.
 
 ```bash
 npm install
-cp api/.env.example api/.env           # then set JWT_SECRET (64 hex chars)
+cp api/.env.example api/.env           # then set JWT_SECRET (64 hex chars) and ATIMS_ADMIN_PASSWORD (first run only)
 docker compose up -d postgres minio    # postgres on :5433, minio on :9000/:9001
 npm run migrate -w @atims/api
 npm run dev                            # API on :3000, frontend on :5173
