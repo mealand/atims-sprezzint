@@ -1,7 +1,8 @@
 import { query, actor } from '../db/pool.js';
 import { evaluateGate, type StageRequirementRow } from '../services/gates.js';
-import { canonicalHash, canonicalize, STAGES, type Stage, type Role } from '@atims/shared';
+import { canonicalHash, STAGES, type Stage, type Role } from '@atims/shared';
 import { nextLink } from '../services/appendEvent.js';
+import { buildWireEvent, checkPubkey, checkSignedSubmission, resolveSignedCreatedAt } from '../services/signedEvent.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface CreateBody {
@@ -11,6 +12,8 @@ interface CreateBody {
 interface EventBody {
   event_type?: string; to_stage?: string; payload?: Record<string, unknown>;
   actor_pubkey?: string; actor_sig?: string; dry_run?: boolean; created_at?: string;
+  /** seq of the dry-run wire event the client signed (detects a chain that moved meanwhile). */
+  seq?: number;
 }
 
 export default async function batchRoutes(app: FastifyInstance) {
@@ -89,13 +92,17 @@ export default async function batchRoutes(app: FastifyInstance) {
       if (!batchRow) return reply.code(404).send({ error: 'batch not found' });
       if (batchRow.compliance_status === 'blocked') return reply.code(409).send({ error: 'batch is blocked by a failed gate' });
 
-      const { event_type, to_stage, payload, actor_pubkey, actor_sig, dry_run, created_at } =
-        req.body as EventBody & { dry_run?: boolean; created_at?: string };
+      const { event_type, to_stage, payload, actor_pubkey, actor_sig, dry_run, created_at, seq: seqSigned } =
+        (req.body ?? {}) as EventBody;
       if (!event_type || !payload) return reply.code(400).send({ error: 'event_type and payload required' });
 
       if (batchRow.current_holder_id !== actor(req)) {
         return reply.code(403).send({ error: 'only the current holder can append events' });
       }
+
+      // ── Every client event is signed by a device key (F1) ──
+      const badKey = checkPubkey(actor_pubkey);
+      if (badKey) return reply.code(badKey.status).send(badKey);
 
       const batchId = String(batchRow.id);
 
@@ -128,31 +135,46 @@ export default async function batchRoutes(app: FastifyInstance) {
 
       // ── Append the event on the hash chain ──
       const { seq, prev_hash: prevHash } = await nextLink(batchId);
-      // Client-supplied created_at makes client-side signing possible; must be recent and parseable.
-      let createdAt = new Date().toISOString();
-      if (created_at) {
-        const t = new Date(created_at);
-        if (!Number.isNaN(t.valueOf()) && Math.abs(Date.now() - t.valueOf()) < 10 * 60_000) {
-          createdAt = t.toISOString();
-        }
+
+      // Dry-run: the server fixes created_at and returns the exact wire event to sign.
+      // Final: the client echoes that created_at; it is validated, never silently replaced,
+      // because changing any signed field would invalidate the signature.
+      let createdAt: string;
+      if (dry_run) {
+        createdAt = new Date().toISOString();
+      } else {
+        const ts = resolveSignedCreatedAt(created_at);
+        if ('status' in ts) return reply.code(ts.status).send(ts);
+        createdAt = ts.value;
       }
-      const wireEvent = {
-        batch_id: batchId, seq, event_type,
-        actor_id: actor(req), actor_pubkey: actor_pubkey ?? null,
-        to_stage: to_stage ?? null, payload, created_at: createdAt,
-      };
+      const wireEvent = buildWireEvent({
+        batchId, seq, eventType: event_type, actorId: actor(req), actorPubkey: actor_pubkey as string,
+        toStage: to_stage ?? null, payload, createdAt,
+      });
       const payloadHash = canonicalHash(wireEvent);
 
-      // ── Dry-run: return the exact wire event + hashes so the client can sign it ──
       if (dry_run) {
         return reply.send({ wire_event: wireEvent, payload_hash: payloadHash, prev_hash: prevHash });
       }
 
-      const { rows: inserted } = await query(
-        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash, payload_hash, to_stage, payload, created_at)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11) RETURNING *`,
-        [batchId, seq, event_type, actor(req), actor_pubkey ?? null, actor_sig ?? null, prevHash, payloadHash, to_stage ?? null, JSON.stringify(payload), createdAt],
-      );
+      // Reject before insert: a stored bad signature would mark the batch as tampered forever.
+      const rejected = checkSignedSubmission({ wire: wireEvent, actorSig: actor_sig, clientSeq: seqSigned });
+      if (rejected) return reply.code(rejected.status).send(rejected);
+
+      let inserted: Record<string, unknown>[];
+      try {
+        inserted = (await query(
+          `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash, payload_hash, to_stage, payload, created_at)
+           VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10::jsonb,$11) RETURNING *`,
+          [batchId, seq, event_type, actor(req), actor_pubkey, actor_sig, prevHash, payloadHash, to_stage ?? null, JSON.stringify(payload), createdAt],
+        )).rows;
+      } catch (err) {
+        // Another event took this seq between our read and insert: the client must re-sign.
+        if ((err as { code?: string }).code === '23505') {
+          return reply.code(409).send({ status: 409, code: 'STALE_EVENT', error: 'the batch changed while saving; request a new dry-run and sign again' });
+        }
+        throw err;
+      }
 
       // ── Apply consequences: stage advance and custody transfer ──
       let batch = batchRow;

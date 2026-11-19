@@ -30,7 +30,8 @@ export async function ensureKey(): Promise<HeldKey> {
   return derive(seed);
 }
 
-/** Sign the canonical JSON (exact bytes the server persists). */
+/** Sign the canonical JSON (exact bytes the server persists).
+ *  Pass the seed from the same HeldKey whose pubkey was sent, so key and signature always match. */
 export async function signCanonical(payload: unknown, seed?: string): Promise<string> {
   const s = seed ?? localStorage.getItem(SEED_KEY);
   if (!s) throw new Error('no signing key on this device');
