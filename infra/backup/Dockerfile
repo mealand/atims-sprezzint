@@ -1,12 +1,16 @@
 # ATiMs nightly backup job: pg_dump + MinIO client, run as a Railway cron service.
-# Context: infra/backup
-FROM postgres:16-alpine
+# Build context: infra/backup (set the Railway service Root Directory to /infra/backup).
+#
+# PG_MAJOR must be >= the Postgres server's major version, or pg_dump refuses to run.
+# On Railway, set a service variable PG_MAJOR (e.g. 16 or 17); it is passed as a build arg.
+ARG PG_MAJOR=16
+FROM postgres:${PG_MAJOR}-alpine
 
-# mc binary was pulled from dl.min.io; Alpine's packaged minio-client (as `mcli`) is the stable source.
-RUN apk add --no-cache curl bash minio-client
+# Alpine's packaged MinIO client installs as `mcli`.
+RUN apk add --no-cache minio-client
 
 COPY backup.sh /backup.sh
 RUN chmod +x /backup.sh
 
-# Railway cron services run the start command on schedule and exit.
+# Railway cron services run the start command on schedule; the script exits when done.
 CMD ["/bin/sh", "/backup.sh"]
