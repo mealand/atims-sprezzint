@@ -8,6 +8,7 @@ import { describe, it, expect, beforeAll } from 'vitest';
 import * as ed from '@noble/ed25519';
 import { canonicalize } from '@atims/shared';
 import type { AccessEntity, BatchParties } from '../src/services/access.js';
+import type { Queryable } from '../src/services/tx.js';
 
 process.env.JWT_SECRET ??= 'test-secret-at-least-16-chars';
 process.env.NODE_ENV ??= 'test';
@@ -28,26 +29,30 @@ interface State {
   maxSeq: number;
 }
 
-function fakeClient(state: State) {
+function fakeClient(state: State): Queryable & { log: string[] } {
   const log: string[] = [];
   const client = {
     log,
-    async query(text: string, params: unknown[] = []) {
-      const sql = text.replace(/\s+/g, ' ').trim();
-      log.push(sql);
-      if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return { rows: [] };
-      if (sql.startsWith('SELECT * FROM handover_tokens')) return { rows: state.token && state.token.token === params[0] ? [state.token] : [] };
-      if (sql.startsWith('SELECT * FROM batches')) return { rows: state.batch ? [state.batch] : [] };
-      if (sql.includes('COALESCE(MAX(seq)')) return { rows: [{ s: state.maxSeq + 1 }] };
-      if (sql.startsWith('SELECT seq, payload_hash')) {
-        return { rows: [{ batch_id: BATCH, seq: state.maxSeq, payload_hash: 'a'.repeat(64), actor_pubkey: null, actor_sig: null }] };
-      }
-      if (sql.startsWith('INSERT INTO batch_events')) return { rows: [{ id: 'ev-1', seq: params[1] }] };
-      if (sql.startsWith('UPDATE handover_tokens')) return { rows: [] };
-      if (sql.startsWith('UPDATE batches')) return { rows: [{ ...state.batch, current_holder_id: params[1] }] };
-      throw new Error(`unexpected SQL: ${sql}`);
+    // Generic like Queryable.query; rows are cast because this fake returns untyped records.
+    async query<T>(text: string, params: unknown[] = []): Promise<{ rows: T[] }> {
+      return { rows: respond(text, params) as T[] };
     },
   };
+  function respond(text: string, params: unknown[]): Record<string, unknown>[] {
+    const sql = text.replace(/\s+/g, ' ').trim();
+    log.push(sql);
+    if (/^(BEGIN|COMMIT|ROLLBACK)$/.test(sql)) return [];
+    if (sql.startsWith('SELECT * FROM handover_tokens')) return state.token && state.token.token === params[0] ? [state.token] : [];
+    if (sql.startsWith('SELECT * FROM batches')) return state.batch ? [state.batch] : [];
+    if (sql.includes('COALESCE(MAX(seq)')) return [{ s: state.maxSeq + 1 }];
+    if (sql.startsWith('SELECT seq, payload_hash')) {
+      return [{ batch_id: BATCH, seq: state.maxSeq, payload_hash: 'a'.repeat(64), actor_pubkey: null, actor_sig: null }];
+    }
+    if (sql.startsWith('INSERT INTO batch_events')) return [{ id: 'ev-1', seq: params[1] }];
+    if (sql.startsWith('UPDATE handover_tokens')) return [];
+    if (sql.startsWith('UPDATE batches')) return [{ ...state.batch, current_holder_id: params[1] }];
+    throw new Error(`unexpected SQL: ${sql}`);
+  }
   return client;
 }
 
