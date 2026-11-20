@@ -17,6 +17,10 @@ COPY frontend/ frontend/
 
 ARG VITE_API_URL=/api
 ENV VITE_API_URL=$VITE_API_URL
+# Optional landing-page demo links, printed by scripts/seed-demo.ts.
+# Railway passes a service variable of the same name as this build arg.
+ARG VITE_DEMO_TRACES=
+ENV VITE_DEMO_TRACES=$VITE_DEMO_TRACES
 WORKDIR /app/frontend
 RUN npx vite build
 
