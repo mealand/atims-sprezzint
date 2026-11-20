@@ -63,3 +63,5 @@ Tips:
 ## Fallback: GitHub Codespaces
 
 If claude.ai/code is ever unavailable, open the repo in a GitHub Codespace (120 free core hours a month on a personal account) and install Claude Code there with `npm install -g @anthropic-ai/claude-code`. Then run `bash scripts/cloud-setup.sh` and sign in with `claude` using your Pro account. Do not set `ANTHROPIC_API_KEY` there, because that bills the API instead of your Pro plan.
+
+Cloud environment last verified: 2026-11-20.
