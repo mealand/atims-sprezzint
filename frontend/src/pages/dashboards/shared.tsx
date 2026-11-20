@@ -410,7 +410,11 @@ function EvidenceDialog({ batch, types, onClose }: { batch: Batch; types: string
       if (reference.trim()) meta.reference = reference.trim();
       if (isLab) {
         const r = Object.fromEntries(Object.entries(results).filter(([, v]) => v));
-        if (Object.keys(r).length) meta.results = r;
+        if (Object.keys(r).length) {
+          meta.results = r;
+          // The corridor gate reads meta.analytes: the analytes this report covers.
+          meta.analytes = Object.keys(r).map((k) => k.toUpperCase());
+        }
       }
       await api(`/batches/${batch.id}/evidence`, { method: 'POST', body: { evidence_type: type, file_hash, meta, stored } });
       toast({ variant: 'success', title: `${docLabel(type)} added`, description: stored ? 'File stored and hash recorded on the chain.' : 'Hash recorded on the chain. Keep the original file.' });

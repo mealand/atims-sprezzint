@@ -1,75 +1,92 @@
-# ATiMs — Alliance Pitch
+# ATiMs: Alliance Pitch
 
-**Sprezz Integrated Limited** · atims.sprezzint.com · 100% open-source stack · zero paid services
+**Sprezz Integrated Limited** · atims.sprezzint.com · open-source code, built in Abuja
 
 ---
 
 ## The one-liner
 
-ATiMs makes a sack of ginger as provable as a bank transaction: every custody event
-is cryptographically signed, hash-chained, and publicly timestamped — and a batch
-**physically cannot advance** to its next supply-chain stage without the required
-evidence.
+ATiMs makes a sack of sesame as provable as a bank transfer. Every custody event is
+signed on the device of the person who made it, chained by hash and timestamped on
+Bitcoin, and a batch **cannot move** to its next supply-chain stage until the export
+corridor's required documents are on file from the right parties.
 
 ## The problem
 
-Export-bound agriculture loses enormous value to consignment rejections:
+Export agriculture loses value to rejected consignments:
 
-- inconsistent paperwork and unverifiable custody chains,
-- quality gates that exist on paper but are never *enforced*,
-- opaque non-tariff measures (NTMs) that buyers and regulators resolve by rejecting
-  whole consignments.
+- paperwork that is inconsistent and custody chains nobody can check,
+- quality gates that exist on paper but are never enforced,
+- opaque non-tariff measures that buyers and regulators settle by rejecting whole lots.
 
-Existing traceability tools are **passive ledgers**: they record what happened.
-None of them stop an under-documented batch from moving.
+Most traceability tools record what happened. They do not stop an under-documented
+batch from moving.
 
 ## What ATiMs does differently
 
-1. **Active compliance gates.** Stage requirements are data (`stage_requirements`
-   rows): to move HARVESTED → AGGREGATED → PACKED → IN_TRANSIT → EXPORTED, the batch
-   must carry evidence of the required types from the required roles. The gate blocks
-   the transition — no evidence, no movement. Adding a new corridor is adding data,
-   not code.
-2. **Verifiable without trusting us.** Each event is canonical JSON, SHA-256 hashed,
-   and ed25519-signed with a key held on the actor's device. Events chain via
-   `prev_hash`. The daily Merkle root is anchored to **OpenTimestamps**
-   (Bitcoin-backed, free). A buyer, regulator, or consumer can scan a QR and the
-   public trace page **recomputes every hash and signature in their own browser**
-   before displaying anything. A standalone CLI (`@atims/verify`) audits the chain
+1. **Gates that block.** Each corridor's rules are data. On the Nigeria to EU sesame
+   corridor, a batch cannot be marked PACKED until a lab has reported pesticide
+   residues, aflatoxin and ethylene oxide, and it cannot be EXPORTED without a
+   phytosanitary certificate from an inspector, an export declaration from the exporter
+   and a certificate of origin. On the Nigeria to UAE corridor, it cannot be DELIVERED
+   until the named buyer confirms delivery. A blocked batch shows exactly what is
+   missing and who must supply it. A new corridor is new rows, not new code.
+2. **Verifiable without trusting us.** Each event is canonical JSON, hashed with SHA-256
+   and linked to the one before it. Stage moves, handovers, inspector sign-offs and
+   delivery confirmations are signed with an ed25519 key held in the user's browser,
+   and the server checks the signature before it stores anything. A buyer scans the QR
+   code and the trace page recomputes every hash, link and signature on the buyer's own
+   phone before it shows the history. Batch heads are timestamped through
+   OpenTimestamps, which anchors them in Bitcoin, and anyone can check the proof with
+   the standard `ots` tool. An open-source command line verifier does the same check
    without our server.
-3. **Evidence that provably exists.** Certificates and lab files are hashed in the
-   browser, uploaded directly to MinIO (S3-compatible, self-hosted) via presigned
-   URLs, and referenced on the ledger by hash. Files are re-obtainable through
-   short-lived signed URLs; nothing is overwritten or silently deleted.
+3. **Accounts that start in minutes.** Farmers, aggregators, processors, exporters,
+   labs, inspectors, buyers and regulators register themselves with the details their
+   role needs, confirm a code sent by email and start work. No admin has to approve
+   them first. The public trace shows each party's trust level: self-verified, or
+   KYB-verified after a document review.
+4. **Documents by fingerprint.** Certificates and lab reports are fingerprinted in the
+   browser, stored in object storage, and recorded on the batch history by their hash,
+   so a swapped file is detectable.
 
-## Traction & current state
+## Where it stands today
 
-- **Deployed and live** at `atims.sprezzint.com` (production, TLS, custom domain).
-- Full flow proven end-to-end: farmer registration → admin verification → batch
-  creation → handovers → evidence upload → public trace + independent verification
-  → OpenTimestamps anchoring.
-- Append-only ledger enforced at the database level (UPDATE/DELETE blocked by rules).
-- Nightly encrypted-path backups of the ledger (`pg_dump` → object storage,
-  7-day retention).
-- Monorepo, TypeScript strict, property-tested core (canonical hashing, gates).
+- **Live** at atims.sprezzint.com with a public API, deployed automatically from the
+  main branch.
+- **A working demo you can open now:** three sesame batches created through the real
+  product. One reached the EU, one reached the UAE with the buyer's confirmation, and
+  one is blocked at packing because its lab report is missing. Each trace verifies in
+  your browser.
+- Two corridors configured: Nigeria to EU sesame and Nigeria to UAE sesame.
+- Role dashboards for all eight self-registering roles, mobile first.
+- The history table refuses edits and deletions at the database level.
+- Nightly database backups to object storage, kept for 7 days.
+- Every change runs through automated tests, including an end-to-end test that drives
+  the whole flow against a real database.
+- No pilot customers yet. That is what we are asking for.
 
-## Why the open-source commitment is the moat, not the risk
+## Why open source helps
 
-- Traceability *is* a trust product: an operator who can be audited byte-for-byte
-  is more credible to buyers, regulators, and development partners than a black box.
-- **Zero paid services.** Everything — Postgres, MinIO, OpenTimestamps, the app
-  itself — runs on open-source software. A ministry, cooperative, or NGO can stand
-  up the whole system with `docker compose up`, in their own jurisdiction, keeping
-  their data sovereign.
-- The ledger format and verifier are open: third parties can build their own
-  audits on top of our data rather than being locked into us.
+- Traceability is a trust product. A system that buyers, regulators and partners can
+  audit line by line is more credible than a black box.
+- The record format and the verifier are open, so third parties can check our data
+  without asking us.
+- The code runs on open-source components (PostgreSQL, MinIO, OpenTimestamps), so a
+  ministry, cooperative or development partner could host its own copy in its own
+  jurisdiction.
+
+## On the roadmap, not built
+
+- Settlement in stablecoins or any other payment rail.
+- An installable offline app for areas with no signal.
+- Encrypted backups.
+- More corridors and commodities (ginger, cashew, hibiscus) and livestock.
 
 ## The ask
 
-Partnership through the Alliance to pilot one real export corridor end-to-end:
-seeding the corridor's actual stage requirements (certificates, lab standards,
-port checks), onboarding a cooperative of growers, and proving that a
-signature-verified, gate-enforced custody chain reduces consignment rejections
-and inspection time.
+A partnership to pilot one real corridor end to end: load the corridor's actual
+requirements with the regulators and labs involved, onboard a cooperative of growers
+and one exporter, and measure whether a gate-enforced, verifiable custody chain reduces
+rejected consignments and inspection time.
 
 **Contact:** Sprezz Integrated Limited · dev@sprezzint.com

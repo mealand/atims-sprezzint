@@ -9,3 +9,6 @@ coverage/
 uploads/
 tsconfig.tsbuildinfo
 .vite/
+
+# Demo seed output (passwords and device keys)
+scripts/.demo-credentials.json

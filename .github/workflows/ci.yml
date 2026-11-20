@@ -17,7 +17,39 @@ jobs:
       - run: npm ci
       - name: Shared canonical & hash tests
         run: npm run test -w @atims/shared
-      - name: Unit tests (chain, gates)
+      - name: Unit tests (no database)
         run: npm run test -w @atims/api --if-present
       - name: Typecheck everything
         run: npm run build
+
+  integration:
+    # The real Fastify app on a real PostgreSQL 16 database: migrations, registration,
+    # email code, signed events, handovers, buyer confirmation, public trace, the blocked
+    # gate, and scripts/seed-demo.ts end to end (api/test/integration).
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: atims
+          POSTGRES_PASSWORD: atims
+          POSTGRES_DB: postgres
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U atims"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      INTEGRATION_DATABASE_URL: postgres://atims:atims@localhost:5432/atims_integration
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Integration tests (Postgres 16)
+        working-directory: api
+        run: npx vitest run --config test/integration/vitest.config.ts
