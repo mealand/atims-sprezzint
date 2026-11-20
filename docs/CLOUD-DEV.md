@@ -24,10 +24,10 @@ In claude.ai/code, open the **environment selector** (next to the repo picker) a
 |---|---|
 | Network access | **Limited**, with **Allow package managers** ticked |
 | Allowed domains (one per line) | `*.railway.app`<br>`atims.sprezzint.com`<br>`*.opentimestamps.org`<br>`*.eternitywall.com`<br>`ots.btc.catallaxy.com`<br>`api.resend.com` |
-| Setup script | `bash scripts/cloud-setup.sh` |
+| Setup script | `if [ -d atims-sprezzint ]; then (cd atims-sprezzint && bash scripts/cloud-setup.sh); fi` |
 | Environment variables | leave empty |
 
-Save. The setup script installs dependencies, starts the VM's PostgreSQL, creates a local `atims` database, writes a throwaway `api/.env` and runs the migrations. It never touches production.
+Save. The script runs from the home folder (`/home/user`) and the repo is cloned one level down, hence the `cd`. It installs dependencies, starts the VM's PostgreSQL, creates a local `atims` database, writes a throwaway `api/.env` and runs the migrations. It never touches production.
 
 **Secrets rule:** ordinary environment variables are readable by anyone who uses the environment. When a task truly needs a real key (for example, the email API key later), add it as a **Network secret** bound to its host. Never put real keys in environment variables or in the repo, because the repo is public.
 
