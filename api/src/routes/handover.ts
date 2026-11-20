@@ -1,17 +1,20 @@
 import { query, actor } from '../db/pool.js';
-import { canonicalHash } from '@atims/shared';
-import { nextLink } from '../services/appendEvent.js';
 import { randomBytes } from 'node:crypto';
-import { loadBatch, requireAccess } from '../services/access.js';
-import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
+import { accessEntity, loadBatch, requireAccess } from '../services/access.js';
+import { acceptHandover, type AcceptBody, type TokenRow } from '../services/handover.js';
+import { withClient } from '../services/tx.js';
+import type { FastifyInstance, FastifyRequest } from 'fastify';
 
-/** M3.1 — QR custody handover. Current holder mints a one-time token; the
- *  receiving entity scans it and accepts, appending a signed-chain
- *  CUSTODY_TRANSFER event that moves current_holder_id. */
+/** M3.1 QR custody handover (F3, F11). The current holder mints a one-time
+ *  token; the receiver scans the QR (a /handover/accept?token= URL) and accepts
+ *  with a signed CUSTODY_TRANSFER event. This is the only way custody moves:
+ *  CUSTODY_TRANSFER is server-only on POST /batches/:id/events. */
 
-interface TokenRow {
-  id: string; batch_id: string; token: string; from_holder: string;
-  used_at: string | null; used_by: string | null; expires_at: string;
+/** Where the QR points: the frontend accept page. Relative when no public URL is configured. */
+function acceptUrl(req: FastifyRequest, token: string): string {
+  const path = `/handover/accept?token=${encodeURIComponent(token)}`;
+  const origin = process.env.PUBLIC_APP_URL ?? req.headers.origin;
+  return origin ? `${String(origin).replace(/\/$/, '')}${path}` : path;
 }
 
 export default async function handoverRoutes(app: FastifyInstance) {
@@ -35,8 +38,10 @@ export default async function handoverRoutes(app: FastifyInstance) {
         batch_id: batch.id,
         trace_id: batch.trace_id,
         expires_at: rows[0].expires_at,
-        // QR payload: the accepting device hits the accept endpoint with this.
-        handover_url: `atims://handover/${token}`,
+        // QR payload: the full accept-page URL. HandoverAccept.tsx parses it
+        // (and still accepts a bare token or the legacy atims://handover/<token>).
+        handover_url: acceptUrl(req, token),
+        accept_path: `/handover/accept?token=${encodeURIComponent(token)}`,
       });
     },
   );
@@ -54,57 +59,44 @@ export default async function handoverRoutes(app: FastifyInstance) {
       if (new Date(t.expires_at).valueOf() < Date.now()) return reply.code(410).send({ error: 'handover token expired' });
       const batch = (await query(
         `SELECT id, trace_id, commodity, quantity, unit, current_stage, origin_state,
-                current_holder_id, origin_entity_id FROM batches WHERE id = $1`, [t.batch_id],
+                current_holder_id, origin_entity_id, corridor, buyer_id FROM batches WHERE id = $1`, [t.batch_id],
       )).rows[0];
       const from = (await query(`SELECT nexus_id, name, role FROM entities WHERE id = $1`, [t.from_holder])).rows[0];
       reply.send({ batch, from, expires_at: t.expires_at });
     },
   );
 
-  /** POST /handover/:token/accept — receiving entity takes custody (chain event). */
-  app.post<{ Params: { token: string }; Body: { actor_pubkey?: string; actor_sig?: string; created_at?: string } }>(
+  /**
+   * POST /handover/:token/accept: the receiver takes custody.
+   * 1. { actor_pubkey, dry_run: true } returns the exact CUSTODY_TRANSFER wire event to sign; nothing is written.
+   * 2. { actor_pubkey, actor_sig, created_at, seq } from that dry-run commits it in one transaction.
+   */
+  app.post<{ Params: { token: string }; Body: AcceptBody }>(
     '/handover/:token/accept',
     { onRequest: [app.authenticate] },
-    async (req: FastifyRequest<{ Params: { token: string }; Body: { actor_pubkey?: string; actor_sig?: string; created_at?: string } }>, reply) => {
-      const me = actor(req);
-      const t = (await query<TokenRow>(
-        `SELECT * FROM handover_tokens WHERE token = $1 FOR UPDATE`, [req.params.token],
-      )).rows[0];
-      if (!t) return reply.code(404).send({ error: 'handover token not found' });
-      if (t.used_at) return reply.code(410).send({ error: 'handover token already used' });
-      if (new Date(t.expires_at).valueOf() < Date.now()) return reply.code(410).send({ error: 'handover token expired' });
-      if (t.from_holder === me) return reply.code(409).send({ error: 'cannot accept your own handover' });
-
-      const loaded = await loadBatch(t.batch_id);
-      if (!loaded) return reply.code(404).send({ error: 'batch not found' });
-      if (!requireAccess(req, reply, 'accept_handover', loaded.parties)) return;
-      const batch = loaded.row;
-      if (batch.current_holder_id !== t.from_holder) {
-        return reply.code(409).send({ error: 'custody has moved since this token was issued' });
+    async (req: FastifyRequest<{ Params: { token: string }; Body: AcceptBody }>, reply) => {
+      let out;
+      try {
+        out = await withClient((client) => acceptHandover(client, {
+          token: req.params.token,
+          me: accessEntity(req),
+          body: req.body ?? {},
+          loadParties: async (batchId) => (await loadBatch(batchId))?.parties ?? null,
+        }));
+      } catch (err) {
+        // Another event took this seq between our read and insert: the client must re-sign.
+        if ((err as { code?: string }).code === '23505') {
+          return reply.code(409).send({ status: 409, code: 'STALE_EVENT', error: 'the batch changed while saving; request a new dry-run and sign again' });
+        }
+        throw err;
       }
-
-      const payload = { to_entity_id: me, via: 'handover', token_id: t.id };
-      const { seq, prev_hash: prevHash } = await nextLink(String(batch.id));
-      const createdAt = req.body.created_at && !Number.isNaN(new Date(req.body.created_at).valueOf())
-        ? new Date(req.body.created_at).toISOString() : new Date().toISOString();
-      const wire = {
-        batch_id: String(batch.id), seq, event_type: 'CUSTODY_TRANSFER',
-        actor_id: me, actor_pubkey: req.body.actor_pubkey ?? null, to_stage: null,
-        payload, created_at: createdAt,
-      };
-      const payloadHash = canonicalHash(wire);
-
-      const { rows: ev } = await query(
-        `INSERT INTO batch_events (batch_id, seq, event_type, actor_id, actor_pubkey, actor_sig, prev_hash, payload_hash, to_stage, payload, created_at)
-         VALUES ($1,$2,'CUSTODY_TRANSFER',$3,$4,$5,$6,$7,NULL,$8::jsonb,$9) RETURNING *`,
-        [batch.id, seq, me, req.body.actor_pubkey ?? null, req.body.actor_sig ?? null, prevHash, payloadHash, JSON.stringify(payload), createdAt],
-      );
-      await query(`UPDATE handover_tokens SET used_at = now(), used_by = $2 WHERE id = $1`, [t.id, me]);
-      const updated = (await query(
-        `UPDATE batches SET current_holder_id = $2, updated_at = now() WHERE id = $1 RETURNING *`,
-        [batch.id, me],
-      )).rows[0];
-      reply.send({ event: ev[0], batch: updated });
+      if (out.kind === 'rejected') return reply.code(out.status).send({ status: out.status, code: out.code, error: out.error });
+      if (out.kind === 'dry_run') {
+        return reply.send({ wire_event: out.wire_event, payload_hash: out.payload_hash, prev_hash: out.prev_hash });
+      }
+      await query(`INSERT INTO audit_log (actor_id, action, detail) VALUES ($1, 'handover.accept', $2)`,
+        [actor(req), { batch: out.batch.id, event: out.event.id }]);
+      reply.send({ event: out.event, batch: out.batch });
     },
   );
 }
