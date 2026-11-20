@@ -12,3 +12,6 @@ tsconfig.tsbuildinfo
 
 # Demo seed output (passwords and device keys)
 scripts/.demo-credentials.json
+
+# Private application and outreach documents (never publish)
+Application/
