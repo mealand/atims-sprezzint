@@ -97,8 +97,12 @@ export function crossCheck(view: TraceView, events: VerifyEvent[], browserHead: 
   }
   for (const ev of view.evidence) {
     const p = (bySeq.get(ev.seq)?.payload ?? {}) as Record<string, unknown>;
+    // Documents recorded before the entity model (T1) stored no issuer role in the chain
+    // (issued_by_role: null). Their role comes from ATiMs records and is labelled as such
+    // on the page, so only compare the role when the chain actually records one.
+    const roleMismatch = p.issued_by_role != null && p.issued_by_role !== ev.issuer_role;
     if (bySeq.get(ev.seq)?.event_type !== 'EVIDENCE_ADDED' || p.evidence_type !== ev.evidence_type
-      || p.file_hash !== ev.file_hash || p.issued_by_role !== ev.issuer_role) {
+      || p.file_hash !== ev.file_hash || roleMismatch) {
       out.push(`document at #${ev.seq} differs from the chain`);
     }
   }
@@ -481,6 +485,12 @@ function TraceBody({ view, proof }: { view: TraceView; proof: BrowserProof }) {
                     {e.issuer_trust_tier && <TrustBadge tier={trustTierOf({ trust_tier: e.issuer_trust_tier })} size="sm" />}
                     {e.analytes?.map((a) => <Badge key={a} size="sm">{a.replace(/_/g, ' ')}</Badge>)}
                   </div>
+                  {proof.events.length > 0
+                    && (proof.events.find((x) => x.seq === e.seq)?.payload as { issued_by_role?: unknown } | undefined)?.issued_by_role == null && (
+                    <p className="mt-2 text-xs text-ink-muted">
+                      Issuer role from ATiMs records. This older document did not store the role in the chain itself.
+                    </p>
+                  )}
                   <p className="mt-2 break-all font-mono text-[11px] leading-relaxed text-ink-muted">sha256 {e.file_hash}</p>
                 </li>
               ))}
