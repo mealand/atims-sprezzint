@@ -3,12 +3,11 @@
  * Postgres. (The pg pool connects lazily; these requests never reach it.)
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
-import type { FastifyInstance } from 'fastify';
 
 process.env.JWT_SECRET ??= 'test-secret-at-least-16-chars';
 process.env.NODE_ENV ??= 'test';
 
-let app: FastifyInstance;
+let app: Awaited<ReturnType<typeof import('../src/app.js')['buildApp']>>;
 
 beforeAll(async () => {
   const { buildApp } = await import('../src/app.js');

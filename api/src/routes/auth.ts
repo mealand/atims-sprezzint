@@ -6,6 +6,7 @@ import {
   CODE_TTL_MS, MAX_CODE_ATTEMPTS, checkCode, checkIssueRate, generateCode, hashCode, sendVerificationCode,
   type CodeDelivery, type EmailCodeRow,
 } from '../services/email.js';
+import { lockHolders, reclaimStale, type Reclaimed } from '../services/staleRegistration.js';
 import {
   NEXUS_PREFIX, PASSWORD_MIN_LENGTH, parseRegistration, registrationColumns, registrationIdentifiers,
   type Role, type TrustTier,
@@ -113,18 +114,23 @@ export default async function authRoutes(app: FastifyInstance) {
     let outcome: Outcome;
     try {
       outcome = await inTransaction<Outcome>(async (db) => {
-        const emailTaken = (await db.query(`SELECT 1 FROM entities WHERE lower(email) = $1`, [reg.email])).rowCount;
-        if (emailTaken) {
+        // Lock every account holding this email or a registration number on the
+        // form. Unconfirmed registrations older than 24 hours are stale and give
+        // their email and identifiers up; any other holder is a conflict.
+        const holders = await lockHolders(db, reg.email, ids);
+        const live = new Set(holders.filter((h) => !h.stale).map((h) => h.id));
+        if (holders.some((h) => live.has(h.id) && h.email?.toLowerCase() === reg.email.toLowerCase())) {
           return { conflict: {
             code: 'EMAIL_TAKEN',
             error: 'an account with this email already exists; log in, or request a new code if you have not verified it',
             issues: [{ path: 'email', message: 'already registered' }],
           } };
         }
-        if (ids.length) {
+        if (ids.length && live.size) {
           const taken = (await db.query<{ kind: string }>(
-            `SELECT kind FROM entity_identifiers WHERE (kind, value) IN (SELECT * FROM unnest($1::text[], $2::text[]))`,
-            [ids.map((i) => i.kind), ids.map((i) => i.value)],
+            `SELECT kind FROM entity_identifiers
+              WHERE (kind, value) IN (SELECT * FROM unnest($1::text[], $2::text[])) AND entity_id = ANY($3::uuid[])`,
+            [ids.map((i) => i.kind), ids.map((i) => i.value), [...live]],
           )).rows;
           if (taken.length) {
             return { conflict: {
@@ -134,6 +140,9 @@ export default async function authRoutes(app: FastifyInstance) {
             } };
           }
         }
+        // Reclaim only once the registration is certain to go ahead.
+        const reclaimed: Reclaimed[] = [];
+        for (const h of holders) if (h.stale) reclaimed.push(await reclaimStale(db, h));
 
         const nexusId = `NX-${NEXUS_PREFIX[reg.role]}-${randomBytes(4).toString('hex').toUpperCase()}`;
         const entity = (await db.query<EntityRow>(
@@ -148,6 +157,10 @@ export default async function authRoutes(app: FastifyInstance) {
         const code = await issueCode(db, entity.id);
         await db.query(`INSERT INTO audit_log (actor_id, action, detail) VALUES ($1, 'entity.register', $2)`,
           [entity.id, { role: reg.role }]);
+        for (const r of reclaimed) {
+          await db.query(`INSERT INTO audit_log (actor_id, action, detail) VALUES ($1, 'entity.registration_reclaimed', $2)`,
+            [entity.id, r]);
+        }
         return { entity, code };
       });
     } catch (err) {
