@@ -10,8 +10,8 @@
 [`docs/ENTITY-MODEL.md`](docs/ENTITY-MODEL.md) (roles, trust tiers, permissions) ·
 [`docs/ALLIANCE-PITCH.md`](docs/ALLIANCE-PITCH.md) (pitch) ·
 [`docs/MVP-PLAN.md`](docs/MVP-PLAN.md) (pilot-ready MVP plan) ·
-[`docs/ATIMS-OVERVIEW.md`](docs/ATIMS-OVERVIEW.md) (the original blueprint; parts of it,
-such as Keycloak and a nightly Merkle root, were never built, and this README describes what was)
+[`docs/ATIMS-OVERVIEW.md`](docs/ATIMS-OVERVIEW.md) (product blueprint: what the MVP has
+built and what is planned)
 
 ## What it does
 
