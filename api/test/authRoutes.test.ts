@@ -7,6 +7,7 @@ import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 process.env.JWT_SECRET ??= 'test-secret-at-least-16-chars';
 process.env.NODE_ENV ??= 'test';
 
+// Typed from buildApp(): its pino logger makes it narrower than the default FastifyInstance.
 let app: Awaited<ReturnType<typeof import('../src/app.js')['buildApp']>>;
 
 beforeAll(async () => {
