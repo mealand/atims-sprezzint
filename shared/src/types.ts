@@ -1,6 +1,8 @@
 /** ATiMs shared domain types — single source of truth for api + frontend. */
 
-export type Role = 'farmer' | 'aggregator' | 'processor' | 'exporter' | 'lab' | 'inspector' | 'regulator' | 'admin';
+import type { Role, TrustTier } from './roles.js';
+
+export type { Role, TrustTier };
 export type EntityStatus = 'pending' | 'verified' | 'suspended' | 'rejected';
 export type BatchType = 'crop'; // livestock arrives in a later phase
 export type ComplianceStatus = 'pending' | 'compliant' | 'non_compliant' | 'blocked';
@@ -32,6 +34,12 @@ export interface Entity {
   name: string;
   role: Role;
   status: EntityStatus;
+  trust_tier: TrustTier;
+  email?: string | null;
+  email_verified_at?: string | null;
+  kyb_verified_at?: string | null;
+  verified_by?: string | null;
+  profile?: Record<string, unknown>;
   state?: string | null;
   country: string;
   created_at: string;
@@ -85,8 +93,7 @@ export const ROLE_LABELS: Record<Role, string> = {
   exporter: 'Exporter',
   lab: 'Laboratory',
   inspector: 'Inspector',
+  buyer: 'Buyer',
   regulator: 'Regulator',
   admin: 'Administrator',
 };
-
-export const BATCH_CREATORS: Role[] = ['farmer'];

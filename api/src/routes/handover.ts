@@ -2,6 +2,7 @@ import { query, actor } from '../db/pool.js';
 import { canonicalHash } from '@atims/shared';
 import { nextLink } from '../services/appendEvent.js';
 import { randomBytes } from 'node:crypto';
+import { loadBatch, requireAccess } from '../services/access.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 /** M3.1 — QR custody handover. Current holder mints a one-time token; the
@@ -19,13 +20,10 @@ export default async function handoverRoutes(app: FastifyInstance) {
     '/batches/:id/handover/start',
     { onRequest: [app.authenticate] },
     async (req: FastifyRequest<{ Params: { id: string } }>, reply) => {
-      const batch = (await query<Record<string, unknown>>(
-        `SELECT * FROM batches WHERE id::text = $1 OR trace_id = $1`, [req.params.id],
-      )).rows[0];
-      if (!batch) return reply.code(404).send({ error: 'batch not found' });
-      if (batch.current_holder_id !== actor(req)) {
-        return reply.code(403).send({ error: 'only the current holder can start a handover' });
-      }
+      const loaded = await loadBatch(req.params.id);
+      if (!loaded) return reply.code(404).send({ error: 'batch not found' });
+      if (!requireAccess(req, reply, 'start_handover', loaded.parties)) return;
+      const batch = loaded.row;
       const token = randomBytes(24).toString('base64url');
       const { rows } = await query<{ id: string; expires_at: string }>(
         `INSERT INTO handover_tokens (batch_id, token, from_holder)
@@ -77,10 +75,10 @@ export default async function handoverRoutes(app: FastifyInstance) {
       if (new Date(t.expires_at).valueOf() < Date.now()) return reply.code(410).send({ error: 'handover token expired' });
       if (t.from_holder === me) return reply.code(409).send({ error: 'cannot accept your own handover' });
 
-      const batch = (await query<Record<string, unknown>>(
-        `SELECT * FROM batches WHERE id = $1`, [t.batch_id],
-      )).rows[0];
-      if (!batch) return reply.code(404).send({ error: 'batch not found' });
+      const loaded = await loadBatch(t.batch_id);
+      if (!loaded) return reply.code(404).send({ error: 'batch not found' });
+      if (!requireAccess(req, reply, 'accept_handover', loaded.parties)) return;
+      const batch = loaded.row;
       if (batch.current_holder_id !== t.from_holder) {
         return reply.code(409).send({ error: 'custody has moved since this token was issued' });
       }

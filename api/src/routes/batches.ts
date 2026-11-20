@@ -3,6 +3,7 @@ import { evaluateGate, type StageRequirementRow } from '../services/gates.js';
 import { canonicalHash, STAGES, type Stage, type Role } from '@atims/shared';
 import { nextLink } from '../services/appendEvent.js';
 import { buildWireEvent, checkPubkey, checkSignedSubmission, resolveSignedCreatedAt } from '../services/signedEvent.js';
+import { accessEntity, guard, listVisibleBatches, loadBatch, requireAccess } from '../services/access.js';
 import type { FastifyInstance, FastifyRequest, FastifyReply } from 'fastify';
 
 interface CreateBody {
@@ -20,7 +21,7 @@ export default async function batchRoutes(app: FastifyInstance) {
   /** POST /batches — farmers create a batch; genesis event recorded (server-attested). */
   app.post<{ Body: CreateBody }>(
     '/batches',
-    { onRequest: [app.authenticate, app.requireRole('farmer')] },
+    { onRequest: [app.authenticate, guard('create_batch')] },
     async (req: FastifyRequest<{ Body: CreateBody }>, reply) => {
       const { commodity, variety, quantity, unit, production_date, origin_state, destination_country, notes } = req.body ?? {};
       if (!commodity || !quantity || !unit || !production_date) {
@@ -54,29 +55,57 @@ export default async function batchRoutes(app: FastifyInstance) {
     },
   );
 
-  /** GET /batches (mine) */
+  /** GET /batches: every batch the caller may view (see access.ts view_batch). */
   app.get('/batches', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const { rows } = await query(
-      `SELECT * FROM batches WHERE origin_entity_id = $1 OR current_holder_id = $1 ORDER BY created_at DESC LIMIT 200`,
-      [actor(req)],
-    );
-    reply.send({ batches: rows });
+    reply.send({ batches: await listVisibleBatches(accessEntity(req)) });
   });
 
-  /** GET /batches/:id — batch + events + evidence for actors & inspectors */
+  /** GET /batches/:id: batch + events + evidence, for parties to the batch (access.ts view_batch). */
   app.get<{ Params: { id: string } }>('/batches/:id', { onRequest: [app.authenticate] }, async (req, reply) => {
-    const { rows } = await query<Record<string, unknown>>(
-      `SELECT * FROM batches WHERE id::text = $1 OR trace_id = $1`, [req.params.id],
-    );
-    const batch = rows[0];
-    if (!batch) return reply.code(404).send({ error: 'batch not found' });
+    const loaded = await loadBatch(req.params.id);
+    if (!loaded) return reply.code(404).send({ error: 'batch not found' });
+    if (!requireAccess(req, reply, 'view_batch', loaded.parties)) return;
+    const batch = loaded.row;
     const events = (await query(`SELECT * FROM batch_events WHERE batch_id = $1 ORDER BY seq ASC`, [batch.id])).rows;
     const evidence = (await query(
       `SELECT e.*, ent.role AS issued_by_role FROM evidence e JOIN entities ent ON ent.id = e.actor_id
        WHERE e.batch_id = $1 ORDER BY e.created_at`, [batch.id],
     )).rows;
-    reply.send({ batch, events, evidence });
+    const assignments = (await query(
+      `SELECT ba.entity_id, ent.nexus_id, ent.name, ent.role, ent.trust_tier, ba.created_at
+         FROM batch_assignments ba JOIN entities ent ON ent.id = ba.entity_id
+        WHERE ba.batch_id = $1 ORDER BY ba.created_at`, [batch.id],
+    )).rows;
+    reply.send({ batch, events, evidence, assignments });
   });
+
+  /**
+   * POST /batches/:id/assignments { entity_id | nexus_id }: the current holder
+   * assigns a lab or inspector, who can then view the batch and add its own reports.
+   */
+  app.post<{ Params: { id: string }; Body: { entity_id?: string; nexus_id?: string } }>(
+    '/batches/:id/assignments', { onRequest: [app.authenticate] },
+    async (req, reply) => {
+      const loaded = await loadBatch(req.params.id);
+      if (!loaded) return reply.code(404).send({ error: 'batch not found' });
+      const { entity_id, nexus_id } = req.body ?? {};
+      if (!entity_id && !nexus_id) return reply.code(400).send({ error: 'entity_id or nexus_id required' });
+      const target = (await query<{ id: string; role: Role; status: string }>(
+        `SELECT id, role, status FROM entities WHERE ${entity_id ? 'id::text = $1' : 'nexus_id = upper($1)'}`,
+        [entity_id ?? nexus_id],
+      )).rows[0];
+      if (!target || target.status !== 'verified') return reply.code(404).send({ error: 'no active account with that id' });
+      if (!requireAccess(req, reply, 'assign_party', loaded.parties, { target })) return;
+      await query(
+        `INSERT INTO batch_assignments (batch_id, entity_id, assigned_by) VALUES ($1, $2, $3)
+         ON CONFLICT (batch_id, entity_id) DO NOTHING`,
+        [loaded.parties.id, target.id, actor(req)],
+      );
+      await query(`INSERT INTO audit_log (actor_id, action, detail) VALUES ($1, 'batch.assign', $2)`,
+        [actor(req), { batch: loaded.parties.id, target: target.id, role: target.role }]);
+      reply.code(201).send({ batch_id: loaded.parties.id, entity_id: target.id, role: target.role });
+    },
+  );
 
   /**
    * POST /batches/:id/events — the core write path.
@@ -86,19 +115,16 @@ export default async function batchRoutes(app: FastifyInstance) {
     '/batches/:id/events',
     { onRequest: [app.authenticate] },
     async (req: FastifyRequest<{ Params: { id: string }; Body: EventBody }>, reply) => {
-      const batchRow = (await query<Record<string, unknown>>(
-        `SELECT * FROM batches WHERE id::text = $1`, [req.params.id],
-      )).rows[0];
-      if (!batchRow) return reply.code(404).send({ error: 'batch not found' });
+      const loaded = await loadBatch(req.params.id);
+      if (!loaded) return reply.code(404).send({ error: 'batch not found' });
+      const batchRow = loaded.row;
       if (batchRow.compliance_status === 'blocked') return reply.code(409).send({ error: 'batch is blocked by a failed gate' });
 
       const { event_type, to_stage, payload, actor_pubkey, actor_sig, dry_run, created_at, seq: seqSigned } =
         (req.body ?? {}) as EventBody;
       if (!event_type || !payload) return reply.code(400).send({ error: 'event_type and payload required' });
 
-      if (batchRow.current_holder_id !== actor(req)) {
-        return reply.code(403).send({ error: 'only the current holder can append events' });
-      }
+      if (!requireAccess(req, reply, 'append_event', loaded.parties)) return;
 
       // ── Every client event is signed by a device key (F1) ──
       const badKey = checkPubkey(actor_pubkey);
