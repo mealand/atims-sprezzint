@@ -3,6 +3,8 @@ import { useSearchParams, useNavigate } from 'react-router-dom';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { BrowserMultiFormatReader } from '@zxing/browser';
 import { api } from '../../lib/api';
+import { ensureKey, signCanonical } from '../../lib/keys';
+import type { WireEvent } from '../../lib/events';
 import DashboardLayout from '../../components/DashboardLayout';
 import { StageBadge } from '../dashboard/FarmerDashboard';
 
@@ -12,10 +14,56 @@ interface Preview {
   expires_at: string;
 }
 
-/** M3.1 — accept a custody handover by scanning the holder's QR (or pasting the token). */
+/**
+ * Pull the handover token out of whatever was scanned or pasted:
+ *   https://atims.sprezzint.com/handover/accept?token=XYZ  (the QR the holder shows)
+ *   /handover/accept?token=XYZ                             (relative link)
+ *   atims://handover/XYZ                                   (legacy QR)
+ *   XYZ                                                    (bare token)
+ * Mirrors extractHandoverToken in api/src/services/handover.ts.
+ */
+export function parseHandoverToken(input: string): string {
+  const text = input.trim();
+  if (!text) return '';
+  if (text.startsWith('atims://handover/')) {
+    return decodeURIComponent(text.slice('atims://handover/'.length).split(/[?#]/)[0]);
+  }
+  const m = text.match(/[?&]token=([^&#\s]+)/);
+  if (m) return decodeURIComponent(m[1]);
+  return text;
+}
+
+/** Retries when another event lands between dry-run and submit (409 STALE_EVENT). */
+const MAX_ATTEMPTS = 3;
+
+/**
+ * Accept with a signed CUSTODY_TRANSFER: dry-run to get the exact wire event,
+ * sign it with this device's key, then submit the signature with the echoed
+ * created_at and seq. The server commits it in one transaction.
+ */
+async function acceptSigned(token: string): Promise<{ batch: { id: string } }> {
+  const key = await ensureKey();
+  const path = `/handover/${encodeURIComponent(token)}/accept`;
+  for (let attempt = 1; ; attempt++) {
+    const dry = await api<{ wire_event: WireEvent }>(path, { method: 'POST', body: { actor_pubkey: key.pubkeyB64, dry_run: true } });
+    const actor_sig = await signCanonical(dry.wire_event, key.seed);
+    try {
+      return await api<{ batch: { id: string } }>(path, {
+        method: 'POST',
+        body: { actor_pubkey: key.pubkeyB64, actor_sig, created_at: dry.wire_event.created_at, seq: dry.wire_event.seq },
+      });
+    } catch (err) {
+      const stale = (err as { data?: { code?: string } })?.data?.code === 'STALE_EVENT';
+      if (stale && attempt < MAX_ATTEMPTS) continue;
+      throw err;
+    }
+  }
+}
+
+/** M3.1: accept a custody handover by scanning the holder's QR (or pasting the link or token). */
 export default function HandoverAccept() {
   const [ params, setParams ] = useSearchParams();
-  const token = params.get('token') ?? '';
+  const token = parseHandoverToken(params.get('token') ?? '');
   const [ scanning, setScanning ] = useState(!token);
   const [ scanError, setScanError ] = useState<string | null>(null);
   const [ manual, setManual ] = useState('');
@@ -30,8 +78,8 @@ export default function HandoverAccept() {
     const reader = new BrowserMultiFormatReader();
     reader.decodeFromVideoDevice(undefined, videoRef.current!, (result) => {
       if (stopped || !result) return;
-      const text = result.getText().trim();
-      const t = text.startsWith('atims://handover/') ? text.slice('atims://handover/'.length) : text;
+      const t = parseHandoverToken(result.getText());
+      if (!t) return;
       stopped = true;
       setScanning(false);
       setParams({ token: t });
@@ -46,7 +94,7 @@ export default function HandoverAccept() {
   });
 
   const accept = useMutation({
-    mutationFn: () => api<{ batch: { id: string } }>(`/handover/${encodeURIComponent(token)}/accept`, { method: 'POST', body: {} }),
+    mutationFn: () => acceptSigned(token),
     onSuccess: (res: { batch: { id: string } }) => {
       qc.invalidateQueries({ queryKey: ['batches'] });
       navigate(`/batches/${res.batch.id}`);
@@ -61,8 +109,8 @@ export default function HandoverAccept() {
           <video ref={videoRef} style={{ width: '100%', maxWidth: 420, borderRadius: 12 }} />
           {scanError && <p className="error">{scanError}</p>}
           <div className="row">
-            <input placeholder="…or paste handover token" value={manual} onChange={(e) => setManual(e.target.value)} />
-            <button disabled={!manual} onClick={() => setParams({ token: manual.trim() })}>Use token</button>
+            <input placeholder="…or paste the handover link or token" value={manual} onChange={(e) => setManual(e.target.value)} />
+            <button disabled={!parseHandoverToken(manual)} onClick={() => setParams({ token: parseHandoverToken(manual) })}>Use link</button>
           </div>
         </section>
       ) : (
@@ -85,7 +133,7 @@ export default function HandoverAccept() {
             <li>Stage: <StageBadge stage={preview.data.batch.current_stage} /></li>
             <li>From: {preview.data.from.name} ({preview.data.from.nexus_id}, {preview.data.from.role})</li>
           </ul>
-          <p className="muted tiny">Accepting appends a CUSTODY_TRANSFER event to this batch's hash chain and makes you the current holder.</p>
+          <p className="muted tiny">Accepting signs a CUSTODY_TRANSFER event with this device's key, appends it to the batch's hash chain and makes you the current holder.</p>
           <div className="row">
             <button className="atims-primary" onClick={() => accept.mutate()} disabled={accept.isPending}>
               {accept.isPending ? 'Accepting…' : 'Accept custody'}
