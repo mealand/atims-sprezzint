@@ -1,5 +1,6 @@
 import { useState } from 'react';
 import { useQuery } from '@tanstack/react-query';
+import { useNavigate, useParams } from 'react-router-dom';
 import { api } from '../lib/api';
 import { brand } from '../lib/brand';
 
@@ -12,10 +13,12 @@ interface TraceData {
 
 /** Public, no-auth consumer trace page. */
 export default function Trace() {
-  const traceId = window.location.pathname.split('/').pop()?.toUpperCase();
+  const params = useParams<{ traceId?: string }>();
+  const traceId = params.traceId?.trim().toUpperCase() || undefined;
+  const navigate = useNavigate();
   const { data, error, isLoading } = useQuery<TraceData>({
     queryKey: ['trace', traceId],
-    queryFn: () => api(`/trace/${traceId}`),
+    queryFn: () => api(`/trace/${encodeURIComponent(traceId!)}`),
     enabled: !!traceId,
   });
   const [ input, setInput ] = useState('');
@@ -24,7 +27,11 @@ export default function Trace() {
     return (
       <main className="center">
         <h1 style={{ color: brand.colors.primary }}>ATiMs Trace</h1>
-        <form onSubmit={(e) => { e.preventDefault(); window.location.href = `/trace/${input.trim().toUpperCase()}`; }}>
+        <form onSubmit={(e) => {
+          e.preventDefault();
+          const id = input.trim().toUpperCase();
+          if (id) navigate(`/trace/${encodeURIComponent(id)}`);
+        }}>
           <input placeholder="Enter trace ID e.g. CROP-2026-XXXX" value={input} onChange={(e) => setInput(e.target.value)} />
           <button className="atims-primary">Search</button>
         </form>
