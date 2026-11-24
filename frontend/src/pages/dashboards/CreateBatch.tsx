@@ -26,8 +26,9 @@ export default function CreateBatch() {
   const [corridor, setCorridor] = useState<CorridorId>('NG-EU-SESAME');
   const [form, setForm] = useState({
     commodity: 'Sesame', variety: '', quantity: '', unit: 'kg', production_date: today(),
-    origin_state: '', destination_country: 'NL', notes: '',
+    origin_state: '', destination_country: 'NL', notes: '', buyer_nexus_id: '',
   });
+  const buyerRequired = corridor === 'NG-AE-SESAME';
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -52,6 +53,8 @@ export default function CreateBatch() {
     const quantity = Number(form.quantity);
     if (!form.commodity.trim()) { setError('Choose a commodity.'); return; }
     if (!Number.isFinite(quantity) || quantity <= 0) { setError('Enter a quantity greater than zero.'); return; }
+    const buyer = form.buyer_nexus_id.trim().toUpperCase();
+    if (buyerRequired && !buyer) { setError(`${CORRIDORS[corridor].label} needs the buyer named now: enter the buyer's Nexus ID.`); return; }
     setBusy(true); setError(null);
     try {
       const d = await api<{ batch: { id: string } }>('/batches', {
@@ -61,6 +64,7 @@ export default function CreateBatch() {
           production_date: form.production_date, origin_state: form.origin_state || undefined,
           destination_country: form.destination_country.trim().toUpperCase() || undefined, notes: form.notes.trim() || undefined,
           ...(corridor !== 'DEFAULT' ? { corridor } : {}),
+          ...(buyer ? { buyer_nexus_id: buyer } : {}),
         },
       });
       nav(`/batches/${d.batch.id}`);
@@ -126,6 +130,13 @@ export default function CreateBatch() {
                   : corridor === 'NG-AE-SESAME'
                     ? <Input value="United Arab Emirates" readOnly aria-readonly />
                     : <Input value={form.destination_country} maxLength={2} onChange={set('destination_country')} className="uppercase" />}
+              </Field>
+              <Field label="Buyer's Nexus ID" required={buyerRequired}
+                hint={buyerRequired
+                  ? 'Required on this corridor: the buyer confirms delivery. For example NX-BU-1A2B3C'
+                  : 'Optional. A named buyer can follow the batch and confirm delivery. For example NX-BU-1A2B3C'}>
+                <Input value={form.buyer_nexus_id} onChange={set('buyer_nexus_id')} autoCapitalize="characters" spellCheck={false}
+                  className="font-mono uppercase" />
               </Field>
               <Field label="Notes" hint="Optional">
                 <Textarea rows={2} value={form.notes} onChange={set('notes')} />
