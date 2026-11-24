@@ -49,7 +49,8 @@ export default function BuyerDashboard() {
 function BuyerActions({ batch }: { batch: Batch }) {
   const { me } = useAuth();
   const [open, setOpen] = useState(false);
-  const canConfirm = holds(batch, me?.id) || batch.buyer_id === me?.id;
+  // The server accepts DELIVERY_CONFIRMED only from the buyer named on the batch.
+  const canConfirm = Boolean(me?.id) && batch.buyer_id === me?.id;
   return (
     <div className="flex flex-wrap justify-end gap-2">
       <Button asChild size="sm" variant="outline">
